@@ -1,11 +1,11 @@
 import os, logging, warnings
 #os.environ['DISABLE_V2_BEHAVIOR'] = '1'
 
-from ...imports import SUPPRESS_TF_WARNINGS
-if SUPPRESS_TF_WARNINGS:
+from ...imports import SUPPRESS_DEP_WARNINGS
+if SUPPRESS_DEP_WARNINGS:
     os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-    logging.getLogger("tensorflow").setLevel(logging.CRITICAL)
-    logging.getLogger("tensorflow_hub").setLevel(logging.CRITICAL)
+    logging.getLogger("tensorflow").setLevel(logging.ERROR)
+    logging.getLogger("tensorflow_hub").setLevel(logging.ERROR)
     warnings.simplefilter(action='ignore', category=FutureWarning)
 
 try:

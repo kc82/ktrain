@@ -30,9 +30,16 @@ class TestTransformers(TestCase):
         y_train = train_b.target
         x_test = test_b.data
         y_test = test_b.target
+
+        # convert to string labels
+        y_train = [train_b.target_names[y] for y in y_train]
+        y_test = [train_b.target_names[y] for y in y_test]
+
+        # setup
         self.trn = (x_train, y_train)
         self.val = (x_test, y_test)
-        self.classes = train_b.target_names
+        #self.classes = train_b.target_names
+        self.classes = []  # discover from string labels
 
 
 
@@ -48,6 +55,14 @@ class TestTransformers(TestCase):
                                                  max_features=35000)
         model = txt.text_classifier('distilbert', train_data=trn, preproc=preproc)
         learner = ktrain.get_learner(model, train_data=trn, val_data=val, batch_size=6, eval_batch_size=EVAL_BS)
+
+        # test weight decay
+        # NOTE due to transformers and/or AdamW bug, # val_accuracy is missing in training history if setting weight decay prior to training
+        #self.assertEqual(learner.get_weight_decay(), None)
+        #learner.set_weight_decay(1e-2)
+        #self.assertAlmostEqual(learner.get_weight_decay(), 1e-2)
+
+        # train
         lr = 5e-5
         hist = learner.fit_onecycle(lr, 1)
 
@@ -66,10 +81,11 @@ class TestTransformers(TestCase):
         learner.set_weight_decay(1e-2)
         self.assertAlmostEqual(learner.get_weight_decay(), 1e-2)
 
+
         # test load and save model
         tmp_folder = ktrain.imports.tempfile.mkdtemp()
         learner.save_model(tmp_folder)
-        learner.load_model(tmp_folder, preproc=preproc)
+        learner.load_model(tmp_folder)
 
         # test validate
         cm = learner.validate()
@@ -117,7 +133,7 @@ class TestTransformers(TestCase):
         # test load and save model
         tmp_folder = ktrain.imports.tempfile.mkdtemp()
         learner.save_model(tmp_folder)
-        learner.load_model(tmp_folder, preproc=preproc)
+        learner.load_model(tmp_folder)
 
         # test validate
         cm = learner.validate()

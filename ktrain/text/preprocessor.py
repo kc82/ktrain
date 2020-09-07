@@ -1,33 +1,13 @@
 from ..imports import *
 from .. import utils as U
 from ..preprocessor import Preprocessor
-from ..data import Dataset
+from ..data import SequenceDataset
 from . import textutils as TU
 
-DistilBertTokenizer = transformers.DistilBertTokenizer
-DISTILBERT= 'distilbert'
-
-from transformers import BertConfig, TFBertForSequenceClassification, BertTokenizer, TFBertModel
-from transformers import XLNetConfig, TFXLNetForSequenceClassification, XLNetTokenizer, TFXLNetModel 
-from transformers import XLMConfig, TFXLMForSequenceClassification, XLMTokenizer, TFXLMModel
-from transformers import RobertaConfig, TFRobertaForSequenceClassification, RobertaTokenizer, TFRobertaModel
-from transformers import DistilBertConfig, TFDistilBertForSequenceClassification, DistilBertTokenizer, TFDistilBertModel
-from transformers import AlbertConfig, TFAlbertForSequenceClassification, AlbertTokenizer, TFAlbertModel
-from transformers import CamembertConfig, TFCamembertForSequenceClassification, CamembertTokenizer, TFCamembertModel
-from transformers import XLMRobertaConfig, TFXLMRobertaForSequenceClassification, XLMRobertaTokenizer, TFXLMRobertaModel
 from transformers import AutoConfig, TFAutoModelForSequenceClassification, AutoTokenizer, TFAutoModel
 
-TRANSFORMER_MODELS = {
-    'bert':       (BertConfig, TFBertForSequenceClassification, BertTokenizer, TFBertModel),
-    'xlnet':      (XLNetConfig, TFXLNetForSequenceClassification, XLNetTokenizer, TFXLNetModel),
-    'xlm':        (XLMConfig, TFXLMForSequenceClassification, XLMTokenizer, TFXLMModel),
-    'roberta':    (RobertaConfig, TFRobertaForSequenceClassification, RobertaTokenizer, TFRobertaModel),
-    'distilbert': (DistilBertConfig, TFDistilBertForSequenceClassification, DistilBertTokenizer, TFDistilBertModel),
-    'albert':     (AlbertConfig, TFAlbertForSequenceClassification, AlbertTokenizer, TFAlbertModel),
-    'camembert':  (CamembertConfig, TFCamembertForSequenceClassification, CamembertTokenizer, TFCamembertModel),
-    'xlm_roberta':  (XLMRobertaConfig, TFXLMRobertaForSequenceClassification, XLMRobertaTokenizer, TFXLMRobertaModel)
-}
 
+DISTILBERT= 'distilbert'
 
 NOSPACE_LANGS = ['zh-cn', 'zh-tw', 'ja']
 
@@ -218,6 +198,34 @@ def bert_tokenize(docs, tokenizer, maxlen, verbose=1):
 #         tf.TensorShape([None])))
 #         #tf.TensorShape(])))
 
+def _is_sentence_pair(tup):
+    if isinstance(tup, (tuple)) and len(tup) == 2 and\
+            isinstance(tup[0], str) and isinstance(tup[1], str):
+        return True
+    else:
+        if isinstance(tup, (list, np.ndarray)) and len(tup) == 2 and\
+                isinstance(tup[0], str) and isinstance(tup[1], str):
+            warnings.warn('List or array of two texts supplied, so task being treated as text classification. ' +\
+                          'If this is a sentence pair classification task, please cast to tuple.')
+        return False
+
+
+def detect_text_format(texts):
+    is_pair = False
+    is_array = False
+    err_msg = 'invalid text format: texts should be list of strings or list of sentence pairs in form of tuples (str, str)'
+    if _is_sentence_pair(texts):
+        is_pair=True
+        is_array = False
+    elif isinstance(texts, (tuple, list, np.ndarray)):
+        is_array = True
+        if len(texts) == 0: raise ValueError('texts is empty')
+        peek = texts[0]
+        is_pair = _is_sentence_pair(peek)
+        if not is_pair and not isinstance(peek, str):
+            raise ValueError(err_msg)
+    return is_array, is_pair
+
 
 
 def hf_features_to_tfdataset(features_list, labels):
@@ -232,7 +240,7 @@ def hf_features_to_tfdataset(features_list, labels):
 
 
 
-def hf_convert_example(text, tokenizer=None,
+def hf_convert_example(text_a, text_b=None, tokenizer=None,
                        max_length=512,
                        pad_on_left=False,
                        pad_token=0,
@@ -242,13 +250,13 @@ def hf_convert_example(text, tokenizer=None,
     convert InputExample to InputFeature for Hugging Face transformer
     """
     if tokenizer is None: raise ValueError('tokenizer is required')
-
     inputs = tokenizer.encode_plus(
-        text,
-        None,
+        text_a,
+        text_b,
         add_special_tokens=True,
         return_token_type_ids=True,
-        max_length=max_length,
+        max_length=max_length, 
+        truncation='longest_first'
     )
     input_ids, token_type_ids = inputs["input_ids"], inputs["token_type_ids"]
 
@@ -294,7 +302,7 @@ def hf_convert_examples(texts, y=None, tokenizer=None,
     """
     Loads a data file into a list of ``InputFeatures``
     Args:
-        texts: texts of documents
+        texts: texts of documents or sentence pairs
         y:  labels for documents
         tokenizer: Instance of a tokenizer that will tokenize the examples
         max_length: Maximum example length
@@ -310,16 +318,20 @@ def hf_convert_examples(texts, y=None, tokenizer=None,
         a list of task-specific ``InputFeatures`` which can be fed to the model.
     """
 
-
-
+    is_array, is_pair = detect_text_format(texts)
     data = []
     mb = master_bar(range(1))
     features_list = []
     labels = []
     for i in mb:
         for (idx, text) in enumerate(progress_bar(texts, parent=mb)):
-
-            features = hf_convert_example(text, tokenizer=tokenizer,
+            if is_pair:
+                text_a = text[0]
+                text_b = text[1]
+            else:
+                text_a = text
+                text_b = None
+            features = hf_convert_example(text_a, text_b=text_b, tokenizer=tokenizer,
                                           max_length=max_length,
                                           pad_on_left=pad_on_left,
                                           pad_token=pad_token,
@@ -345,14 +357,15 @@ class TextPreprocessor(Preprocessor):
     Text preprocessing base class
     """
 
-    def __init__(self, maxlen, class_names, lang='en', multilabel=False):
+    def __init__(self, maxlen, class_names, lang='en', multilabel=None):
 
         self.set_classes(class_names) # converts to list of necessary
         self.maxlen = maxlen
         self.lang = lang
-        self.multilabel = multilabel
+        self.multilabel = multilabel # currently, this is always initially set None until set by set_multilabel
         self.preprocess_train_called = False
-        self.label_encoder = None # only set if y is in string format
+        #self.label_encoder = None # only set if y is in string format
+        self.ytransform = None
         self.c = self.c.tolist() if isinstance(self.c, np.ndarray) else self.c
 
 
@@ -390,9 +403,19 @@ class TextPreprocessor(Preprocessor):
         raise NotImplementedError
 
 
-    def set_multilabel(self, data, mode):
+    def set_multilabel(self, data, mode, verbose=1):
         if mode == 'train' and self.get_classes():
-            self.multilabel = U.is_multilabel(data)
+            original_multilabel = self.multilabel
+            discovered_multilabel = U.is_multilabel(data)
+            if original_multilabel is None:
+                self.multilabel = discovered_multilabel
+            elif original_multilabel is True and discovered_multilabel is False:
+                warnings.warn('The multilabel=True argument was supplied, but labels do not indicate '+\
+                              'a multilabel problem (labels appear to be mutually-exclusive).  Using multilabel=True anyways.')
+            elif original_multilabel is False and discovered_multilabel is True:
+                warnings.warn('The multilabel=False argument was supplied, but labels inidcate that  '+\
+                              'this is a multilabel problem (labels are not mutually-exclusive).  Using multilabel=False anyways.')
+            U.vprint("Is Multi-Label? %s" % (self.multilabel), verbose=verbose)
 
 
     def undo(self, doc):
@@ -452,42 +475,17 @@ class TextPreprocessor(Preprocessor):
                 print("\t%s : %s" % (k, int(round(stat_dict[k]))))
 
 
-    def _transform_y(self, y_data):
+    def _transform_y(self, y_data, train=False, verbose=1):
         """
         preprocess y
         If shape of y is 1, then task is considered classification if self.c exists
         or regression if not.
         """
-        if y_data is None: return y_data
-        y_data = np.array(y_data) if type(y_data) == list else y_data
-
-        # check for errors and warnings
-        if not isinstance(y_data[0], str) and len(y_data.shape) ==1 and not self.get_classes():
-            warnings.warn('Task is being treated as TEXT REGRESSION because ' +\
-                          'class_names argument was not supplied. ' + \
-                          'If this is incorrect, supply class_names argument.')
-        elif len(y_data.shape) > 1 and not self.get_classes():
-            raise ValueError('y-values are 1-hot or multi-hot encoded but self.get_classes() is empty. ' +\
-                             'The classes argument should have been supplied.')
-
-        # convert string labels to integers, if necessary
-        if isinstance(y_data[0], str):
-            if self.label_encoder is None:
-                self.label_encoder = LabelEncoder()
-                self.label_encoder.fit(y_data)
-                if self.get_classes(): warnings.warn('class_names argument was ignored, as they were extracted from string labels in dataset')
-                self.set_classes(self.label_encoder.classes_)
-            y_data = self.label_encoder.transform(y_data)
-
-
-        # if shape is 1, this is either a classification or regression task 
-        # depending on class_names existing
-        y_data = to_categorical(y_data) if len(y_data.shape) == 1 and self.get_classes() else y_data
-        return y_data
-
-
-
-
+        if self.ytransform is None:
+            self.ytransform = U.YTransform(class_names=self.get_classes())
+        y = self.ytransform.apply(y_data, train=train)
+        if train: self.c = self.ytransform.get_classes()
+        return y
 
 
 class StandardTextPreprocessor(TextPreprocessor):
@@ -496,13 +494,28 @@ class StandardTextPreprocessor(TextPreprocessor):
     """
 
     def __init__(self, maxlen, max_features, class_names=[], classes=[], 
-                 lang='en', ngram_range=1, multilabel=False):
+                 lang='en', ngram_range=1, multilabel=None):
         class_names = self.migrate_classes(class_names, classes)
         super().__init__(maxlen, class_names, lang=lang, multilabel=multilabel)
         self.tok = None
         self.tok_dct = {}
         self.max_features = max_features
         self.ngram_range = ngram_range
+
+
+    def __getstate__(self):
+        return {k: v for k, v in self.__dict__.items()}
+
+
+    def __setstate__(self, state):
+        """
+        For backwards compatibility with pre-ytransform versions
+        """
+        self.__dict__.update(state)
+        if not hasattr(self, 'ytransform'):
+            le = self.label_encoder if hasattr(self, 'label_encoder') else None
+            self.ytransform = U.YTransform(class_names=self.get_classes(), label_encoder=le)
+
 
 
     def get_preprocessor(self):
@@ -553,7 +566,7 @@ class StandardTextPreprocessor(TextPreprocessor):
         U.vprint('x_train shape: ({},{})'.format(x_train.shape[0], x_train.shape[1]), verbose=verbose)
 
         # transform y
-        y_train = self._transform_y(y_train)
+        y_train = self._transform_y(y_train, train=True, verbose=verbose)
         if y_train is not None and verbose:
             print('y_train shape: %s' % (y_train.shape,))
 
@@ -589,7 +602,7 @@ class StandardTextPreprocessor(TextPreprocessor):
         U.vprint('x_test shape: ({},{})'.format(x_test.shape[0], x_test.shape[1]), verbose=verbose)
 
         # transform y
-        y_test = self._transform_y(y_test)
+        y_test = self._transform_y(y_test, train=False, verbose=verbose)
         if y_test is not None and verbose:
             print('y_test shape: %s' % (y_test.shape,))
 
@@ -675,7 +688,7 @@ class BERTPreprocessor(TextPreprocessor):
     """
 
     def __init__(self, maxlen, max_features, class_names=[], classes=[], 
-                lang='en', ngram_range=1, multilabel=False):
+                lang='en', ngram_range=1, multilabel=None):
         class_names = self.migrate_classes(class_names, classes)
 
 
@@ -693,6 +706,20 @@ class BERTPreprocessor(TextPreprocessor):
         self.tok_dct = dict((v,k) for k,v in token_dict.items())
         self.max_features = max_features # ignored
         self.ngram_range = 1 # ignored
+
+
+    def __getstate__(self):
+        return {k: v for k, v in self.__dict__.items()}
+
+
+    def __setstate__(self, state):
+        """
+        For backwards compatibility with pre-ytransform versions
+        """
+        self.__dict__.update(state)
+        if not hasattr(self, 'ytransform'):
+            le = self.label_encoder if hasattr(self, 'label_encoder') else None
+            self.ytransform = U.YTransform(class_names=self.get_classes(), label_encoder=le)
 
 
     def get_preprocessor(self):
@@ -726,7 +753,7 @@ class BERTPreprocessor(TextPreprocessor):
         x = bert_tokenize(texts, self.tok, self.maxlen, verbose=verbose)
 
         # transform y
-        y = self._transform_y(y)
+        y = self._transform_y(y, train=mode=='train', verbose=verbose)
         result = (x, y)
         self.set_multilabel(result, mode)
         if mode == 'train': self.preprocess_train_called = True
@@ -746,7 +773,7 @@ class TransformersPreprocessor(TextPreprocessor):
 
     def __init__(self,  model_name,
                 maxlen, max_features, class_names=[], classes=[], 
-                lang='en', ngram_range=1, multilabel=False):
+                lang='en', ngram_range=1, multilabel=None):
         class_names = self.migrate_classes(class_names, classes)
 
         if maxlen > 512: raise ValueError('Transformer models only supports maxlen <= 512')
@@ -757,39 +784,73 @@ class TransformersPreprocessor(TextPreprocessor):
         self.name = model_name.split('-')[0]
         if model_name.startswith('xlm-roberta'): 
             self.name = 'xlm_roberta'
+            self.model_name = 'jplu/tf-' + self.model_name
         else:
             self.name = model_name.split('-')[0]
-        if self.name not in TRANSFORMER_MODELS:
-            #raise ValueError('unsupported model name %s' % (model_name))
-            self.config = AutoConfig.from_pretrained(model_name)
-            self.model_type = TFAutoModelForSequenceClassification
-            self.tokenizer_type = AutoTokenizer
-        else:
-            self.config = None # use default config
-            self.model_type = TRANSFORMER_MODELS[self.name][1]
-            self.tokenizer_type = TRANSFORMER_MODELS[self.name][2]
+        self.config = AutoConfig.from_pretrained(model_name)
+        self.model_type = TFAutoModelForSequenceClassification
+        self.tokenizer_type = AutoTokenizer
 
         if "bert-base-japanese" in model_name:
             self.tokenizer_type = transformers.BertJapaneseTokenizer
 
-        tokenizer = self.tokenizer_type.from_pretrained(model_name)
+        # NOTE: As of v0.16.1, do not unnecessarily instantiate tokenizer
+        # as it will be saved/pickled along with Preprocessor, which causes
+        # problems for some community-uploaded models like bert-base-japanse-whole-word-masking.
+        #tokenizer = self.tokenizer_type.from_pretrained(model_name)
+        #self.tok = tokenizer
+        self.tok = None # not pickled,  see __getstate__ 
 
-        self.tok = tokenizer
         self.tok_dct = None
         self.max_features = max_features # ignored
         self.ngram_range = 1 # ignored
 
 
+    def __getstate__(self):
+        return {k: v for k, v in self.__dict__.items() if k not in ['tok']}
+
+
+    def __setstate__(self, state):
+        """
+        For backwards compatibility with previous versions of ktrain
+        that saved tokenizer and did not use ytransform
+        """
+        self.__dict__.update(state)
+        if not hasattr(self, 'tok'): self.tok = None
+        if not hasattr(self, 'ytransform'): 
+            le = self.label_encoder if hasattr(self, 'label_encoder') else None
+            self.ytransform = U.YTransform(class_names=self.get_classes(), label_encoder=le)
+
+
+    def get_tokenizer(self, fpath=None):
+        model_name = self.model_name if fpath is None else fpath
+        if self.tok is None:
+            self.tok = self.tokenizer_type.from_pretrained(model_name)
+        return self.tok
+
+
+    def save_tokenizer(self, fpath):
+        if os.path.isfile(fpath):
+            raise ValueError(f'There is an existing file named {fpath}. ' +\
+                              'Please use dfferent value for fpath.')
+        elif os.path.exists(fpath):
+            pass
+        elif not os.path.exists(fpath):
+            os.makedirs(fpath)
+        tok =self.get_tokenizer()
+        tok.save_pretrained(fpath)
+        return
+
 
 
     def get_preprocessor(self):
-        return (self.tok, self.tok_dct)
+        return (self.get_tokenizer(), self.tok_dct)
 
 
 
     def preprocess(self, texts):
         tseq = self.preprocess_test(texts, verbose=0)
-        return tseq.to_tfdataset(shuffle=False, repeat=False)
+        return tseq.to_tfdataset(train=False)
 
 
     def undo(self, doc):
@@ -797,6 +858,7 @@ class TransformersPreprocessor(TextPreprocessor):
         undoes preprocessing and returns raw data by:
         converting a list or array of Word IDs back to words
         """
+        tok, _ = self.get_preprocessor()
         return self.tok.convert_ids_to_tokens(doc)
         #raise Exception('currently_unsupported: Transformers.Preprocessor.undo is not yet supported')
 
@@ -807,21 +869,34 @@ class TransformersPreprocessor(TextPreprocessor):
         """
 
         U.vprint('preprocessing %s...' % (mode), verbose=verbose)
+        U.check_array(texts, y=y, X_name='texts')
+
+        # detect sentence pairs
+        is_array, is_pair = detect_text_format(texts)
+        if not is_array: raise ValueError('texts must be a list of strings or a list of sentence pairs')
+
+        # detect language
         if self.lang is None and mode=='train': self.lang = TU.detect_lang(texts)
         U.vprint('language: %s' % (self.lang), verbose=verbose)
-        self.print_seqlen_stats(texts, mode, verbose=verbose)
+
+        # print stats
+        if not is_pair: self.print_seqlen_stats(texts, mode, verbose=verbose)
+        if is_pair: U.vprint('sentence pairs detected', verbose=verbose)
 
         # transform y
         if y is None and mode == 'train':
             raise ValueError('y is required for training sets')
         elif y is None:
             y = np.array([1] * len(texts))
-        y = self._transform_y(y)
-        dataset = hf_convert_examples(texts, y=y, tokenizer=self.tok, max_length=self.maxlen,
+        y = self._transform_y(y, train=mode=='train', verbose=verbose)
+
+        # convert examples
+        tok, _ = self.get_preprocessor()
+        dataset = hf_convert_examples(texts, y=y, tokenizer=tok, max_length=self.maxlen,
                                       pad_on_left=bool(self.name in ['xlnet']),
-                                      pad_token=self.tok.convert_tokens_to_ids([self.tok.pad_token][0]),
+                                      pad_token=tok.convert_tokens_to_ids([tok.pad_token][0]),
                                       pad_token_segment_id=4 if self.name in ['xlnet'] else 0)
-        self.set_multilabel(dataset, mode)
+        self.set_multilabel(dataset, mode, verbose=verbose)
         if mode == 'train':  self.preprocess_train_called = True
         return dataset
 
@@ -830,6 +905,34 @@ class TransformersPreprocessor(TextPreprocessor):
     def preprocess_test(self, texts, y=None, mode='test', verbose=1):
         self.check_trained()
         return self.preprocess_train(texts, y=y, mode=mode, verbose=verbose)
+
+
+    @classmethod
+    def load_model_and_configure_from_data(cls, fpath, transformer_ds):
+        """
+        loads model from file path and configures loss function and metrics automatically
+        based on inspecting data
+        Args:
+          fpath(str): path to model folder
+          transformer_ds(TransformerDataset): an instance of TransformerDataset
+        """
+        is_regression = U.is_regression_from_data(transformer_ds)
+        multilabel = U.is_multilabel(transformer_ds)
+        model = TFAutoModelForSequenceClassification.from_pretrained(fpath)
+        if is_regression:
+            metrics = ['mae']
+            loss_fn = 'mse'
+        else:
+            metrics = ['accuracy']
+            if multilabel:
+                loss_fn =  keras.losses.BinaryCrossentropy(from_logits=True)
+            else:
+                loss_fn = keras.losses.CategoricalCrossentropy(from_logits=True)
+        model.compile(loss=loss_fn,
+                      optimizer=U.DEFAULT_OPT,
+                      metrics=metrics)
+        return model
+
 
 
     def _load_pretrained(self, mname, num_labels):
@@ -851,25 +954,52 @@ class TransformersPreprocessor(TextPreprocessor):
 
 
 
-    def get_classifier(self, fpath=None):
+    def get_classifier(self, fpath=None, multilabel=None, metrics=['accuracy']):
+        """
+        creates a model for text classification
+        Args:
+          fpath(str): optional path to saved pretrained model. Typically left as None.
+          multilabel(bool): If None, multilabel status is discovered from data [recommended].
+                            If True, model will be forcibly configured for multilabel task.
+                            If False, model will be forcibly configured for non-multilabel task.
+                            It is recommended to leave this as None.
+          metrics(list): metrics to use
+        """
         self.check_trained()
         if not self.get_classes():
             warnings.warn('no class labels were provided - treating as regression')
             return self.get_regression_model()
+
+        # process multilabel task
+        multilabel = self.multilabel if multilabel is None else multilabel
+        if multilabel is True and self.multilabel is False:
+            warnings.warn('The multilabel=True argument was supplied, but labels do not indicate '+\
+                          'a multilabel problem (labels appear to be mutually-exclusive).  Using multilabel=True anyways.')
+        elif multilabel is False and self.multilabel is True:
+                warnings.warn('The multilabel=False argument was supplied, but labels inidcate that  '+\
+                              'this is a multilabel problem (labels are not mutually-exclusive).  Using multilabel=False anyways.')
+
+        # setup model
         num_labels = len(self.get_classes())
         mname = fpath if fpath is not None else self.model_name
         model = self._load_pretrained(mname, num_labels)
-        if self.multilabel:
+        if multilabel:
             loss_fn =  keras.losses.BinaryCrossentropy(from_logits=True)
         else:
             loss_fn = keras.losses.CategoricalCrossentropy(from_logits=True)
         model.compile(loss=loss_fn,
                       optimizer=U.DEFAULT_OPT,
-                      metrics=['accuracy'])
+                      metrics=metrics)
         return model
 
 
-    def get_regression_model(self, fpath=None):
+    def get_regression_model(self, fpath=None, metrics=['mae']):
+        """
+        creates a model for text regression
+        Args:
+          fpath(str): optional path to saved pretrained model. Typically left as None.
+          metrics(list): metrics to use
+        """
         self.check_trained()
         if self.get_classes():
             warnings.warn('class labels were provided - treating as classification problem')
@@ -880,7 +1010,7 @@ class TransformersPreprocessor(TextPreprocessor):
         loss_fn = 'mse'
         model.compile(loss=loss_fn,
                       optimizer=U.DEFAULT_OPT,
-                      metrics=['mae'])
+                      metrics=metrics)
         return model
 
 
@@ -923,8 +1053,7 @@ class Transformer(TransformersPreprocessor):
     """
 
     def __init__(self, model_name, maxlen=128, class_names=[], classes=[],
-                 batch_size=None, multilabel=False,
-                 use_with_learner=True):
+                 batch_size=None, use_with_learner=True):
         """
         Args:
             model_name (str):  name of Hugging Face pretrained model
@@ -947,10 +1076,12 @@ class Transformer(TransformersPreprocessor):
                                      return a ktrain TransformerDataset object for use with
                                      ktrain.get_learner.
             batch_size (int): batch_size - only required if use_with_learner=False
-            multilabel (int):  if True, classifier will be configured for
-                                  multilabel classification.
+
+
+
 
         """
+        multilabel = None # force discovery of multilabel task from data in preprocess_train->set_multilabel
         class_names = self.migrate_classes(class_names, classes)
         if not use_with_learner and batch_size is None:
             raise ValueError('batch_size is required when use_with_learner=False')
@@ -992,9 +1123,8 @@ class Transformer(TransformersPreprocessor):
         tseq = super().preprocess_train(texts, y=y, mode=mode, verbose=verbose)
         if self.use_with_learner: return tseq
         tseq.batch_size = self.batch_size
-        shuffle=True if mode=='train' else False
-        repeat=True if mode=='train' else False
-        return tseq.to_tfdataset(shuffle=shuffle, repeat=repeat)
+        train = (mode == 'train')
+        return tseq.to_tfdataset(train=train)
 
 
     def preprocess_test(self, texts, y=None,  verbose=1):
@@ -1040,14 +1170,10 @@ class TransformerEmbedding():
         else:
             self.name = model_name.split('-')[0]
 
-        if self.name not in TRANSFORMER_MODELS:
-            self.config = AutoConfig.from_pretrained(model_name)
-            self.model_type = TFAutoModel
-            self.tokenizer_type = AutoTokenizer
-        else:
-            self.config = None # use default config
-            self.model_type = TRANSFORMER_MODELS[self.name][3]
-            self.tokenizer_type = TRANSFORMER_MODELS[self.name][2]
+        self.config = AutoConfig.from_pretrained(model_name)
+        self.model_type = TFAutoModel
+        self.tokenizer_type = AutoTokenizer
+
         if "bert-base-japanese" in model_name:
             self.tokenizer_type = transformers.BertJapaneseTokenizer
 
@@ -1159,7 +1285,7 @@ class TransformerEmbedding():
         return np.array(embeddings)
 
 
-class TransformerDataset(Dataset):
+class TransformerDataset(SequenceDataset):
     """
     Wrapper for Transformer datasets.
     """
@@ -1184,14 +1310,23 @@ class TransformerDataset(Dataset):
         return math.ceil(len(self.x) / self.batch_size)
 
 
-    def to_tfdataset(self, shuffle=True, repeat=True):
+    def to_tfdataset(self, train=True):
         """
         convert transformer features to tf.Dataset
         """
+        if train:
+            shuffle=True
+            repeat = True
+        else:
+            shuffle=False
+            repeat=False
+
         if len(self.y.shape) == 1:
             yshape = []
+            ytype = tf.float32
         else:
             yshape = [None]
+            ytype = tf.int64
 
         def gen():
             for idx, data in enumerate(self.x):
@@ -1204,7 +1339,7 @@ class TransformerDataset(Dataset):
             ({'input_ids': tf.int32,
               'attention_mask': tf.int32,
               'token_type_ids': tf.int32},
-             tf.int64),
+             ytype),
             ({'input_ids': tf.TensorShape([None]),
               'attention_mask': tf.TensorShape([None]),
               'token_type_ids': tf.TensorShape([None])},

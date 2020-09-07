@@ -27,6 +27,9 @@ class NERLearner(GenLearner):
         """
         val = self._check_val(val_data)
 
+        if not val.prepare_called:
+            val.prepare()
+
         if not U.is_ner(model=self.model, data=val):
             warnings.warn('learner.validate_ner is only for sequence taggers.')
             return
@@ -46,8 +49,10 @@ class NERLearner(GenLearner):
             label_pred.extend(y_pred)
 
         score = ner_f1_score(label_true, label_pred)
+        #acc = ner_accuracy_score(label_true, label_pred)
         if print_report:
-            print('   F1: {:04.2f}'.format(score * 100))
+            print('   F1:  {:04.2f}'.format(score * 100))
+            #print('   ACC: {:04.2f}'.format(acc * 100))
             print(ner_classification_report(label_true, label_pred))
 
         return score
@@ -137,10 +142,11 @@ class NERLearner(GenLearner):
         """
         a wrapper to model.save
         """
+        self._make_model_folder(fpath)
         if U.is_crf(self.model):
             from .anago.layers import crf_loss
             self.model.compile(loss=crf_loss, optimizer=U.DEFAULT_OPT)
-        self.model.save(fpath, save_format='h5')
+        self.model.save(os.path.join(fpath, U.MODEL_NAME), save_format='h5')
         return
 
 
@@ -163,11 +169,12 @@ class NERLearner(GenLearner):
         return results
 
 
-    def _prepare(self, data, mode='train'):
+    def _prepare(self, data, train=True):
         """
         prepare NERSequence for training
         """
         if data is None: return None
+        mode = 'training' if train else 'validation'
         if not data.prepare_called:
             print('preparing %s data ...' % (mode), end='')
             data.prepare()

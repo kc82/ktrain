@@ -1,6 +1,6 @@
 from ..imports import *
 from ..predictor import Predictor
-from .preprocessor import TextPreprocessor, TransformersPreprocessor
+from .preprocessor import TextPreprocessor, TransformersPreprocessor, detect_text_format
 from .. import utils as U
 
 class TextPredictor(Predictor):
@@ -30,22 +30,29 @@ class TextPredictor(Predictor):
         Makes predictions for a list of strings where each string is a document
         or text snippet.
         If return_proba is True, returns probabilities of each class.
+        Args:
+          texts(str|list): For text classification, texts should be either a str or
+                           a list of str.
+                           For sentence pair classification, texts should be either
+                           a tuple of form (str, str) or list of tuples.
+                           A single tuple of the form (str, str) is automatically treated as sentence pair classification, so
+                           please refrain from using tuples for text classification tasks.
+          return_proba(bool): If True, return probabilities instead of predicted class labels
         """
 
-        is_str = False
-        if isinstance(texts, str):
-            is_str = True
-            texts = [texts]
-        elif not isinstance(texts, np.ndarray) and not isinstance(texts, list):
-            raise ValueError('data must be numpy.ndarray or list (of texts)')
+        is_array, is_pair = detect_text_format(texts)
+        if not is_array: texts = [texts]
+
         classification, multilabel = U.is_classifier(self.model)
 
         # get predictions
         if U.is_huggingface(model=self.model):
             tseq = self.preproc.preprocess_test(texts, verbose=0)
             tseq.batch_size = self.batch_size
-            texts = tseq.to_tfdataset(shuffle=False, repeat=False)
+            texts = tseq.to_tfdataset(train=False)
             preds = self.model.predict(texts)
+            # dep_fix: transformers in TF 2.2.0 returns a tuple insead of NumPy array for some reason
+            if isinstance(preds, tuple) and len(preds) == 1: preds = preds[0] 
         else:
             texts = self.preproc.preprocess(texts)
             preds = self.model.predict(texts, batch_size=self.batch_size)
@@ -63,7 +70,7 @@ class TextPredictor(Predictor):
         result =  preds if return_proba or multilabel or not self.c else [self.c[np.argmax(pred)] for pred in preds] 
         if multilabel and not return_proba:
             result =  [list(zip(self.c, r)) for r in result]
-        if is_str: return result[0]
+        if not is_array: return result[0]
         else:      return result
 
 
@@ -77,7 +84,7 @@ class TextPredictor(Predictor):
         return self.predict(texts, return_proba=True)
 
 
-    def explain(self, doc, truncate_len=512, all_targets=False):
+    def explain(self, doc, truncate_len=512, all_targets=False, n_samples=2500):
         """
         Highlights text to explain prediction
         Args:
@@ -85,18 +92,31 @@ class TextPredictor(Predictor):
             truncate_len(int): truncate document to this many words
             all_targets(bool):  If True, show visualization for
                                 each target.
+            n_samples(int): number of samples to generate and train on.
+                            Larger values give better results, but will take more time.
+                            Lower this value if explain is taking too long.
         """
+        is_array, is_pair = detect_text_format(doc)
+        if is_pair: 
+            warnings.warn('currently_unsupported: explain does not currently support sentence pair classification')
+            return
         if not self.c:
-            warnings.warn('currently_unsupported:  explain does not support text regression')
+            warnings.warn('currently_unsupported: explain does not support text regression')
             return
         try:
             import eli5
             from eli5.lime import TextExplainer
         except:
             msg = 'ktrain requires a forked version of eli5 to support tf.keras. '+\
-                  'Install with: pip3 install git+https://github.com/amaiya/eli5@tfkeras_0_10_1'
+                  'Install with: pip install git+https://github.com/amaiya/eli5@tfkeras_0_10_1'
             warnings.warn(msg)
             return
+        if not hasattr(eli5, 'KTRAIN_ELI5_TAG') or eli5.KTRAIN_ELI5_TAG != KTRAIN_ELI5_TAG:
+            msg = 'ktrain requires a forked version of eli5 to support tf.keras. It is either missing or not up-to-date. '+\
+                  'Uninstall the current version and install/re-install the fork with: pip install git+https://github.com/amaiya/eli5@tfkeras_0_10_1'
+            warnings.warn(msg)
+            return
+
 
         prediction = [self.predict(doc)] if not all_targets else None
 
@@ -105,7 +125,7 @@ class TextPredictor(Predictor):
             doc = self.preproc.process_chinese([doc])
             doc = doc[0]
         doc = ' '.join(doc.split()[:truncate_len])
-        te = TextExplainer(random_state=42)
+        te = TextExplainer(random_state=42, n_samples=n_samples)
         _ = te.fit(doc, self.predict_proba)
         return te.show_prediction(target_names=self.preproc.get_classes(), targets=prediction)
 
@@ -140,19 +160,10 @@ class TextPredictor(Predictor):
         return cm
 
 
-    def save(self, fpath):
-
+    def _save_model(self, fpath):
         if isinstance(self.preproc, TransformersPreprocessor):
-            if os.path.isfile(fpath):
-                raise ValueError(f'There is an existing file named {fpath}. ' +\
-                                  'Please use dfferent value for fpath.')
-            elif not os.path.exists(fpath):
-                os.mkdir(fpath)
             self.model.save_pretrained(fpath)
-            fname_preproc = fpath+'.preproc'
-            with open(fname_preproc, 'wb') as f:
-                pickle.dump(self.preproc, f)
         else:
-            super().save(fpath)
+            super()._save_model(fpath)
         return
 

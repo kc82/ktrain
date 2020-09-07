@@ -8,30 +8,19 @@ import warnings
 import logging
 from distutils.util import strtobool
 from packaging import version
+import re
+os.environ['NUMEXPR_MAX_THREADS'] = '8' # suppress warning from NumExpr on machines with many CPUs
 
-
-# suppress warnings
-SUPPRESS_TF_WARNINGS = strtobool(os.environ.get('SUPPRESS_TF_WARNINGS', '1'))
-if SUPPRESS_TF_WARNINGS:
-    os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-    logging.getLogger('tensorflow').setLevel(logging.ERROR)
-    warnings.simplefilter(action='ignore', category=FutureWarning)
-    # elevate warnings to errors for debugging dependencies
-    #warnings.simplefilter('error', FutureWarning)
-
-
-
-# TF1
-#import tensorflow as tf
-#tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
-#from tensorflow import keras
-
+# TensorFlow
 DISABLE_V2_BEHAVIOR = strtobool(os.environ.get('DISABLE_V2_BEHAVIOR', '0'))
 if DISABLE_V2_BEHAVIOR:
     # TF2-transition
     ACC_NAME = 'acc'
     VAL_ACC_NAME = 'val_acc'
-    import tensorflow.compat.v1 as tf
+    try:
+        import tensorflow.compat.v1 as tf
+    except ImportError:
+        raise Exception('ktrain requires TensorFlow 2 to be installed: pip install tensorflow')
     tf.disable_v2_behavior()
     from tensorflow.compat.v1 import keras
     print('Using DISABLE_V2_BEHAVIOR with TensorFlow')
@@ -39,12 +28,16 @@ else:
     # TF2
     ACC_NAME = 'accuracy'
     VAL_ACC_NAME = 'val_accuracy'
-    import tensorflow as tf
+    try:
+        import tensorflow as tf
+    except ImportError:
+        raise Exception('ktrain requires TensorFlow 2 to be installed: pip install tensorflow')
+
     from tensorflow import keras
 
 # suppress autograph warnings
 tf.autograph.set_verbosity(1)
-#if SUPPRESS_TF_WARNINGS:
+#if SUPPRESS_WARNINGS:
     #tf.autograph.set_verbosity(1)
 
 if version.parse(tf.__version__) < version.parse('2.0'):
@@ -120,7 +113,7 @@ sigmoid = keras.activations.sigmoid
 categorical_crossentropy = keras.losses.categorical_crossentropy
 sparse_categorical_crossentropy = keras.losses.sparse_categorical_crossentropy
 ResNet50 = keras.applications.ResNet50
-MobilNet = keras.applications.mobilenet.MobileNet
+MobileNet = keras.applications.mobilenet.MobileNet
 InceptionV3 = keras.applications.inception_v3.InceptionV3
 pre_resnet50 = keras.applications.resnet50.preprocess_input
 pre_mobilenet = keras.applications.mobilenet.preprocess_input
@@ -216,14 +209,12 @@ import networkx as nx
 # ner
 from seqeval.metrics import classification_report as ner_classification_report
 from seqeval.metrics import f1_score as ner_f1_score
+from seqeval.metrics import accuracy_score as ner_accuracy_score
 from seqeval.metrics.sequence_labeling import get_entities
 import syntok.segmenter as segmenter
 
 
 # transformers
-try:
-    logging.getLogger('transformers').setLevel(logging.CRITICAL)
-except: pass
 import transformers
 
 
@@ -235,10 +226,38 @@ except:
 
 SG_ERRMSG = 'ktrain currently uses a forked version of stellargraph v0.8.2. '+\
             'Please install with: '+\
-            'pip3 install git+https://github.com/amaiya/stellargraph@no_tf_dep_082'
+            'pip install git+https://github.com/amaiya/stellargraph@no_tf_dep_082'
 
 ALLENNLP_ERRMSG  = 'To use ELMo embedings, please install allenlp:\n' +\
-                   'pip3 install allennlp'
+                   'pip install allennlp'
 
 
+# ELI5
+KTRAIN_ELI5_TAG = '0.10.1-1'
+
+
+# Suppress Warnings
+SUPPRESS_DEP_WARNINGS = strtobool(os.environ.get('SUPPRESS_DEP_WARNINGS', '1'))
+def set_global_logging_level(level=logging.ERROR, prefices=[""]):
+    """
+    Override logging levels of different modules based on their name as a prefix.
+    It needs to be invoked after the modules have been loaded so that their loggers have been initialized.
+
+    Args:
+        - level: desired level. e.g. logging.INFO. Optional. Default is logging.ERROR
+        - prefices: list of one or more str prefices to match (e.g. ["transformers", "torch"]). Optional.
+          Default is `[""]` to match all active loggers.
+          The match is a case-sensitive `module_name.startswith(prefix)`
+    """
+    prefix_re = re.compile(fr'^(?:{ "|".join(prefices) })')
+    for name in logging.root.manager.loggerDict:
+        if re.match(prefix_re, name):
+            logging.getLogger(name).setLevel(level)
+if SUPPRESS_DEP_WARNINGS:
+    os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+    warnings.simplefilter(action='ignore', category=FutureWarning)
+    # elevate warnings to errors for debugging dependencies
+    #warnings.simplefilter('error', FutureWarning)
+    import transformers # imported here to suppress transformers warnings
+    set_global_logging_level(logging.ERROR, ["transformers", "nlp", "torch", "tensorflow", "tensorboard", "wandb", 'mosestokenizer', 'shap'])
 

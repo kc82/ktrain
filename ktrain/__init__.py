@@ -1,16 +1,16 @@
 from .version import __version__
-from .imports import *
+from . import imports as I
 from .core import ArrayLearner, GenLearner, get_predictor, load_predictor, release_gpu_memory
 from .vision.learner import ImageClassLearner
 from .text.learner import BERTTextClassLearner, TransformerTextClassLearner
 from .text.ner.learner import NERLearner
 from .graph.learner import NodeClassLearner, LinkPredLearner
-from .data import Dataset
+from .data import Dataset, TFDataset, SequenceDataset
 
 from . import utils as U
 
 __all__ = ['get_learner', 'get_predictor', 'load_predictor', 'release_gpu_memory',
-           'Dataset']
+           'Dataset', 'TFDataset', 'SequenceDataset']
 
 
 
@@ -37,8 +37,11 @@ def get_learner(model, train_data=None, val_data=None,
                            val_data is instance of utils.Sequence.
                            default:32
     workers (int): number of cpu processes used to load data.
-                   only applicable if train_data is is a generator.
+                   This is ignored unless train_data/val_data is an instance of 
+                   tf.keras.preprocessing.image.DirectoryIterator or tf.keras.preprocessing.image.DataFrameIterator. 
     use_multiprocessing(bool):  whether or not to use multiprocessing for workers
+                               This is ignored unless train_data/val_data is an instance of 
+                               tf.keras.preprocessing.image.DirectoryIterator or tf.keras.preprocessing.image.DataFrameIterator. 
     multigpu(bool):             Lets the Learner know that the model has been 
                                 replicated on more than 1 GPU.
                                 Only supported for models from vision.image_classifiers
@@ -46,7 +49,7 @@ def get_learner(model, train_data=None, val_data=None,
     """
 
     # check arguments
-    if not isinstance(model, Model):
+    if not isinstance(model, I.Model):
         raise ValueError('model must be of instance Model')
     U.data_arg_check(train_data=train_data, val_data=val_data)
     if type(workers) != type(1) or workers < 1:
@@ -58,7 +61,7 @@ def get_learner(model, train_data=None, val_data=None,
             wrn_msg = 'Changed use_multiprocessing to True because NumpyArrayIterator with workers>1'
             wrn_msg +=' is slow when use_multiprocessing=False.'
             wrn_msg += ' If you experience issues with this, please set workers=1 and use_multiprocessing=False.'
-            warnings.warn(wrn_msg)
+            I.warnings.warn(wrn_msg)
 
     # verify BERT
     is_bert = U.bert_data_tuple(train_data)
@@ -88,7 +91,7 @@ def get_learner(model, train_data=None, val_data=None,
             wrn=True
         elif maxlen > 512 and batch_size>6:
             wrn=True
-        if wrn: warnings.warn(msg)
+        if wrn: I.warnings.warn(msg)
 
 
     # return the appropriate trainer
@@ -113,3 +116,8 @@ def get_learner(model, train_data=None, val_data=None,
     return learner(model, train_data=train_data, val_data=val_data, 
                    batch_size=batch_size, eval_batch_size=eval_batch_size, 
                    workers=workers, use_multiprocessing=use_multiprocessing, multigpu=multigpu)
+
+
+# keys
+# currently_unsupported: unsupported or disabled features (e.g., xai graph neural networks have not been implemented)
+# dep_fix:  a fix to address a problem in a dependency

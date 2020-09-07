@@ -41,16 +41,17 @@ class ImagePredictor(Predictor):
             import eli5
         except:
             msg = 'ktrain requires a forked version of eli5 to support tf.keras. '+\
-                  'Install with: pip3 install git+https://github.com/amaiya/eli5@tfkeras_0_10_1'
+                  'Install with: pip install git+https://github.com/amaiya/eli5@tfkeras_0_10_1'
             warnings.warn(msg)
             return
 
-        if not hasattr(eli5, 'KTRAIN'):
+        #if not hasattr(eli5, 'KTRAIN'):
+        if not hasattr(eli5, 'KTRAIN_ELI5_TAG') or eli5.KTRAIN_ELI5_TAG != KTRAIN_ELI5_TAG:
             warnings.warn("Since eli5 does not yet support tf.keras, ktrain uses a forked version of eli5.  " +\
-                           "We do not detect this forked version, so predictor.explain will not work.  " +\
+                           "We do not detect this forked version (or it is out-of-date), so predictor.explain may not work.  " +\
                            "It will work if you uninstall the current version of eli5 and install "+\
                            "the forked version:  " +\
-                           "pip3 install git+https://github.com/amaiya/eli5@tfkeras_0_10_1")
+                           "pip install git+https://github.com/amaiya/eli5@tfkeras_0_10_1")
             return
 
         if not DISABLE_V2_BEHAVIOR:
@@ -63,8 +64,8 @@ class ImagePredictor(Predictor):
             return
 
 
-        img = image.load_img(img_fpath, 
-                             target_size=self.preproc.target_size, 
+        img = image.load_img(img_fpath,
+                             target_size=self.preproc.target_size,
                              color_mode=self.preproc.color_mode)
         x = image.img_to_array(img)
         x = np.expand_dims(x, axis=0)
@@ -98,12 +99,12 @@ class ImagePredictor(Predictor):
         """
         Predicts the classes of all images in a folder.
         If return_proba is True, returns probabilities of each class.
-        
+
         """
         if not os.path.isdir(folder): raise ValueError('folder must be valid directory')
         (generator, steps) = self.preproc.preprocess(folder, batch_size=self.batch_size)
         result = self.predict_generator(generator, steps=steps, return_proba=return_proba)
-        if len(result) != len(generator.filenames): 
+        if len(result) != len(generator.filenames):
             raise Exception('number of results does not equal number of filenames')
         return list(zip(generator.filenames, result))
 
@@ -116,11 +117,15 @@ class ImagePredictor(Predictor):
         #    return_proba=True
         #    treat_multilabel = True
         classification, multilabel = U.is_classifier(self.model)
-        if multilabel: return_proba=True
-        preds =  self.model.predict_generator(generator, steps=steps)
-        result =  preds if return_proba else [self.c[np.argmax(pred)] for pred in preds] 
-        if multilabel:
+        if not classification: return_proba=True
+        # *_generator methods are deprecated from TF 2.1.0
+        #preds =  self.model.predict_generator(generator, steps=steps)
+        preds =  self.model.predict(generator, steps=steps)
+        result =  preds if return_proba or multilabel else [self.c[np.argmax(pred)] for pred in preds]
+        if multilabel and not return_proba:
             return [list(zip(self.c, r)) for r in result]
+        if not classification:
+            return np.squeeze(result, axis=1)
         else:
             return result
 
@@ -150,7 +155,7 @@ class ImagePredictor(Predictor):
 
 
         Optionally prints a classification report.
-        Currently, this method is only supported for binary and multiclass 
+        Currently, this method is only supported for binary and multiclass
         problems, not multilabel classification problems.
 
         """
@@ -161,7 +166,9 @@ class ImagePredictor(Predictor):
             return
 
         y_true = generator.classes
-        y_pred = self.model.predict_generator(generator)
+        # *_generator methods are deprecated from TF 2.1.0
+        #y_pred = self.model.predict_generator(generator)
+        y_pred = self.model.predict(generator)
         y_pred = np.argmax(y_pred, axis=1)
         if print_report:
             print(classification_report(y_true, y_pred, target_names=self.c))
@@ -173,16 +180,13 @@ class ImagePredictor(Predictor):
         return cm
 
 
-
-    def save(self, fname):
-        self.model.save(fname, save_format='h5')
-
-        fname_preproc = fname+'.preproc'
-        with open(fname_preproc, 'wb') as f:
+    def _save_preproc(self, fpath):
+        preproc_name = 'tf_model.preproc'
+        with open(os.path.join(fpath, preproc_name), 'wb') as f:
             datagen = self.preproc.get_preprocessor()
             pfunc = datagen.preprocessing_function
             datagen.preprocessing_function = None
             pickle.dump(self.preproc, f)
             datagen.preprocessing_function = pfunc
         return
-        
+

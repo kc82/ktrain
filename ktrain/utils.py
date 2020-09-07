@@ -32,11 +32,30 @@ DEFAULT_ROP = 2
 DEFAULT_TRANSFORMER_LAYERS = [-2] # second-to-last hidden state
 DEFAULT_TRANSFORMER_MAXLEN = 512
 DEFAULT_TRANSFORMER_NUM_SPECIAL = 2
+MODEL_BASENAME = 'tf_model'
+MODEL_NAME = MODEL_BASENAME+'.h5'
+PREPROC_NAME = MODEL_BASENAME+'.preproc'
+
 
 
 #------------------------------------------------------------------------------
 # DATA/MODEL INSPECTORS
 #------------------------------------------------------------------------------
+
+def loss_fn_from_model(model):
+    # dep_fix
+    if version.parse(tf.__version__) < version.parse('2.2'):
+        return model.loss_functions[0].fn
+    else: # TF 2.2.0
+        return model.compiled_loss._get_loss_object(model.compiled_loss._losses[0].name).fn
+
+def metrics_from_model(model):
+    # dep_fix
+    if version.parse(tf.__version__) < version.parse('2.2') or DISABLE_V2_BEHAVIOR:
+        return [m.name for m in model.metrics] if is_tf_keras() else model.metrics
+    else: # TF 2.2.0
+        return model.compiled_metrics._metrics
+
 
 def is_classifier(model):
     """
@@ -60,6 +79,10 @@ def is_classifier(model):
                  'sparse_categorical_crossentropy',
                  'binary_crossentropy']:
         is_classifier = True
+    else:
+        mlist = metrics_from_model(model)
+        if isinstance(mlist, (list, np.ndarray)) and any(['accuracy' in m for m in mlist]):
+            is_classifier = True
 
     # check for multilabel
     if loss == 'binary_crossentropy':
@@ -74,6 +97,8 @@ def is_classifier(model):
                 is_multilabel = True
     return (is_classifier, is_multilabel)
 
+def is_tabular_from_data(data):
+    return type(data).__name__ in ['TabularDataset']
 
 def is_huggingface(model=None, data=None):
     """
@@ -162,35 +187,39 @@ def is_imageclass_from_data(data):
     return type(data).__name__ in ['DirectoryIterator', 'DataFrameIterator', 'NumpyArrayIterator']
 
 
+def is_regression_from_data(data):
+    """
+    checks for regression task from data
+    """
+    data_arg_check(val_data=data, val_required=True)
+    if is_ner(data=data): return False          # NERSequence
+    elif is_nodeclass(data=data): return False  # NodeSequenceWrapper
+    elif is_linkpred(data=data): return False   #LinkSequenceWrapper
+    Y = y_from_data(data)
+    if len(Y.shape) == 1 or (len(Y.shape) > 1 and Y.shape[1] == 1): return True
+    return False
+
+
 def is_multilabel(data):
     """
     checks for multilabel from data
     """
     data_arg_check(val_data=data, val_required=True)
-    if is_iter(data): 
-        if is_ner(data=data): return False   # NERSequence
-        elif is_nodeclass(data=data): return False  # NodeSequenceWrapper
-        multilabel = False
-        for idx, v in enumerate(data):
-            if idx >= 16: break
-            y = v[1]
-            if len(y.shape) == 1 or y.shape[1] == 1: return False
-            total_per_batch = np.sum(y, axis=1)
-            if any(i>1 for i in total_per_batch):
-                multilabel=True
-                break
-        return multilabel
-    else:
-        if len(data[1].shape) == 1: return False
-        multilabel = False
-        for idx, y in enumerate(data[1]):
-            if idx >= 128: break
-            total = sum(y)
-            if total > 1:
-                multilabel=True
-                break
-        return multilabel
-
+    if is_ner(data=data): return False          # NERSequence
+    elif is_nodeclass(data=data): return False  # NodeSequenceWrapper
+    elif is_linkpred(data=data): return False   #LinkSequenceWrapper
+    multilabel = False
+    Y = y_from_data(data)
+    if len(Y.shape) == 1 or (len(Y.shape) > 1 and Y.shape[1] == 1): return False
+    for idx, y in enumerate(Y):
+        if idx >= 1024: break
+        if np.issubdtype(type(y), np.integer) or np.issubdtype(type(y), np.floating):
+            return False
+        total_for_example = sum(y)
+        if total_for_example > 1:
+            multilabel=True
+            break
+    return multilabel
 
 
 def shape_from_data(data):
@@ -268,7 +297,8 @@ def y_from_data(data):
         elif hasattr(data, 'labels'):  # DataFrameIterator
             return data.labels
         elif hasattr(data, 'y'): # NumpyArrayIterator
-            return to_categorical(data.y)
+            #return to_categorical(data.y)
+            return data.y
         else:
             raise Exception('could not determine number of classes from %s' % (type(data)))
     else:
@@ -422,6 +452,10 @@ def get_ktrain_data():
 #------------------------------------------------------------------------------
 # MISC UTILITIES
 #------------------------------------------------------------------------------
+def check_array(X, y=None, X_name='X', y_name='targets' ):
+    if not isinstance(X, (list, np.ndarray)): raise ValueError("%s must be a list or NumPy array" % X_name)
+    if y is not None and not isinstance(y, (list, np.ndarray)): raise ValueError("%s must be a list or NumPy array" % y_name)
+    return
 
 def is_tf_keras():
     if keras.__name__ == 'keras':
@@ -462,5 +496,217 @@ def get_random_colors(n, name='hsv', hex_format=True):
         if hex_format: color = rgb2hex(color)
         result.append(color)
     return np.array(result)
+
+
+def list2chunks(a, n):
+    k, m = divmod(len(a), n)
+    return (a[i * k + min(i, m):(i + 1) * k + min(i + 1, m)] for i in range(n))
+
+
+def get_hf_model_name(model_id):
+    parts = model_id.split('/')
+    if len(parts) == 1:
+        model_id = parts[0]
+    else:
+        model_id = '/'.join(parts[1:])
+    if model_id.startswith('xlm-roberta'): 
+        model_name = 'xlm-roberta'
+    else:
+        model_name = model_id.split('-')[0]
+    return model_name
+
+
+class YTransform:
+    def __init__(self, class_names=[], label_encoder=None):
+        """
+        Cheks and transforms array of targets. Targets are transformed in place.
+        Args:
+          class_names(list):  labels associated with targets (e.g., ['negative', 'positive'])
+                         Only used/required if:
+                         1. targets are one/multi-hot-encoded
+                         2. targets are integers and represent class IDs for classification task
+                         Not required if:
+                         1. targets are numeric and task is regression
+                         2. targets are strings and task is classification (class_names are populated automatically)
+          label_encoder(LabelEncoder): a prior instance of LabelEncoder.  
+                                       If None, will be created when train=True
+        """
+        if type(class_names) != list:
+            if isinstance(class_names, (pd.Series, np.ndarray)): class_names = class_names.tolist()
+            else:
+                raise ValueError('class_names must be list')
+        self.c = class_names
+        self.le = label_encoder
+        self.train_called = False
+
+    def get_classes(self):
+        return self.c
+
+    def set_classes(self, class_names):
+        self.c = class_names.tolist() if isinstance(class_names, np.ndarray) else class_names
+
+
+    def apply(self, targets, train=True):
+        if targets is None and train: 
+            raise ValueError('targets is None')
+        elif targets is None and not train:
+            return
+
+        # validate labels against data
+        targets = np.array(targets) if type(targets) == list else targets
+        if len(targets.shape) > 1 and targets.shape[1] == 1: targets = np.squeeze(targets, axis=1)
+
+        # handle numeric targets (regression)
+        if len(targets.shape) ==1 and not isinstance(targets[0], str):
+            # numeric targets
+            if not self.get_classes() and train:
+                warnings.warn('Task is being treated as REGRESSION because ' +\
+                              'either class_names argument was not supplied or is_regression=True. ' + \
+                              'If this is incorrect, change accordingly.')
+            if not self.get_classes(): targets = np.array(targets, dtype=np.float32)
+        # string targets (classification)
+        elif len(targets.shape) == 1 and isinstance(targets[0], str):
+            if not train and self.le is None: raise ValueError('LabelEncoder has not been trained. Call with train=True')
+            if train:
+                self.le = LabelEncoder()
+                self.le.fit(targets)
+                if self.get_classes(): warnings.warn('class_names argument was ignored, as they were extracted from string labels in dataset')
+                self.set_classes(self.le.classes_)
+            targets = self.le.transform(targets) # convert to numerical targets for classfication
+        # handle categorical targets (classification)
+        elif len(targets.shape) > 1:
+            if not self.get_classes():
+                raise ValueError('targets are 1-hot or multi-hot encoded but class_names is empty. ' +\
+                                 'The classes argument should have been supplied.')
+            else:
+                if train and len(self.get_classes()) != targets.shape[1]:
+                    raise ValueError('training targets suggest %s classes, but class_names are %s' % (targets.shape[1], 
+                                                                                                     self.get_classes()))
+
+        # numeric targets (classification)
+        if len(targets.shape) == 1 and self.get_classes():
+            if np.issubdtype(type(max(targets)), np.floating):
+                warnings.warn('class_names implies classification but targets array contains float(s) instead of integers or strings')
+
+            # TODO check logic
+            if train and ( len(set(targets)) != len(list(range(int(max(targets)+1)))) ):
+                raise ValueError('len(set(targets) is %s but len(list(range(int(max(targets)+1))) is  %s' % (len(list(set(targets))), len(list(range(int(max(targets))+1)))))
+            targets = to_categorical(targets, num_classes=len(self.get_classes()))
+        if train: self.train_called=True
+        return targets
+
+    def apply_train(self, targets):
+        return self.apply(targets, train=True)
+
+    def apply_test(self, targets):
+        return self.apply(targets, train=False)
+
+
+
+class YTransformDataFrame(YTransform):
+    def __init__(self, label_columns=[], is_regression=False):
+        """
+        Checks and transforms label columns in DataFrame. DataFrame is modified in place
+        Args:
+          label_columns(list): list of columns storing labels 
+          is_regression(bool): If True, task is regression and integer targets are treated as numeric dependent variable.
+                               IF False, task is classification and integer targets are treated as class IDs.
+        """
+        self.is_regression = is_regression
+        if isinstance(label_columns, str): label_columns = [label_columns]
+        self.label_columns = label_columns
+        if not label_columns: raise ValueError('label_columns is required')
+        self.label_columns = [self.label_columns] if isinstance(self.label_columns, str) else self.label_columns
+        #class_names = label_columns if len(label_columns) > 1 else []
+        super().__init__(class_names=[])
+
+
+    def get_label_columns(self, squeeze=True):
+        """
+        Returns label columns of transformed DataFrame
+        """
+        if not self.train_called: raise Exception('apply_train should be called first')
+        if not self.is_regression:
+            new_lab_cols = self.c
+        else:
+            new_lab_cols = self.label_columns
+        return new_lab_cols[0] if len(new_lab_cols) ==1 and squeeze else new_lab_cols
+
+    def apply(self, df, train=True):
+        df = df.copy() # dep_fix: SettingWithCopy - prevent original DataFrame from losing old label columns
+
+        labels_exist = True
+        lst = self.label_columns[:]
+        if not all(x in df.columns.values for x in lst): labels_exist = False
+        if train and not labels_exist: raise ValueError('dataframe is missing label columns: %s' % (self.label_columns))
+
+        # extract targets
+        # todo: sort?
+        if len(self.label_columns) > 1: 
+            if train and self.is_regression:
+                warnings.warn('is_regression=True was supplied but ignored because multiple label columns imply classification')
+            cols = df.columns.values
+            missing_cols = []
+            for l in self.label_columns:
+                if l not in df.columns.values: missing_cols.append(l)
+            if len(missing_cols) > 0: 
+                raise ValueError('These label_columns do not exist in df: %s' % (missing_cols))
+
+            # set targets
+            targets = df[self.label_columns].values if labels_exist else np.zeros((df.shape[0], len(self.label_columns)))
+            # set class names
+            if train: self.set_classes(self.label_columns)
+        # single column
+        else: 
+            # set targets
+            targets = df[self.label_columns[0]].values if labels_exist else np.zeros(df.shape[0], dtype=np.int)
+            if self.is_regression and isinstance(targets[0], str):
+                warnings.warn('is_regression=True was supplied but targets are strings - casting to floats')
+                targets = targets.astype(np.float)
+
+            # set class_names if classification task and targets with integer labels
+            if train and not self.is_regression and not isinstance(targets[0], str):
+                class_names = list(set(targets))
+                class_names.sort()
+                class_names = list( map(str, class_names) )
+                if len(class_names) == 2: 
+                    class_names = ['not_'+self.label_columns[0], self.label_columns[0]]
+                else:
+                    class_names = [self.label_columns[0]+'_'+c for c in class_names]
+                self.set_classes(class_names)
+
+        # transform targets
+        targets = super().apply(targets, train=train) # self.c (new label_columns) may be modified here
+        targets = targets if len(targets.shape) > 1 else np.expand_dims(targets, 1) # since self.label_columns is list
+
+        # modify DataFrame
+        if labels_exist:
+            for l in self.label_columns: del df[l] # delete old label columns
+
+        new_lab_cols = self.get_label_columns(squeeze=False)
+        if len(new_lab_cols) != targets.shape[1]:
+            raise ValueError('mismatch between target shape and number of labels - please open ktrain GitHub issue')
+        for i, col in enumerate(new_lab_cols):
+            df[col] = targets[:,i]
+        df[new_lab_cols] = targets
+        df[new_lab_cols] = df[new_lab_cols].astype('float32')
+
+        return df
+
+    def apply_train(self, df):
+        return self.apply(df, train=True)
+    def apply_test(self, df):
+        return self.apply(df, train=False)
+
+
+
+
+
+
+
+
+
+
+
 
 

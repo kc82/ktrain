@@ -129,7 +129,7 @@ class TransformerTextClassLearner(GenLearner):
         return
 
 
-    def _prepare(self, data, mode='train'):
+    def _prepare(self, data, train=True):
         """
         prepare data as tf.Dataset
         """
@@ -137,12 +137,7 @@ class TransformerTextClassLearner(GenLearner):
         # convert arrays to TF dataset (iterator) on-the-fly
         # to work around issues with transformers and tf.Datasets
         if data is None: return None
-        shuffle=True
-        repeat = True
-        if mode != 'train':
-            shuffle = False
-            repeat = False
-        return data.to_tfdataset(shuffle=shuffle, repeat=repeat)
+        return data.to_tfdataset(train=train)
 
 
     def predict(self, val_data=None):
@@ -156,7 +151,11 @@ class TransformerTextClassLearner(GenLearner):
         if val is None: raise Exception('val_data must be supplied to get_learner or predict')
         if hasattr(val, 'reset'): val.reset()
         classification, multilabel = U.is_classifier(self.model)
-        preds = self.model.predict(self._prepare(val, mode='valid'))
+        preds = self.model.predict(self._prepare(val, train=False))
+
+        # dep_fix: transformers in TF 2.2.0 returns a tuple insead of NumPy array for some reason
+        if isinstance(preds, tuple) and len(preds) == 1: preds = preds[0] 
+
         if classification:
             if multilabel:
                 return activations.sigmoid(tf.convert_to_tensor(preds)).numpy()
@@ -170,28 +169,28 @@ class TransformerTextClassLearner(GenLearner):
         """
         save Transformers model
         """
-        if os.path.isfile(fpath):
-            raise ValueError(f'There is an existing file named {fpath}. ' +\
-                              'Please use dfferent value for fpath.')
-        elif not os.path.exists(fpath):
-            os.mkdir(fpath)
+        self._make_model_folder(fpath)
         self.model.save_pretrained(fpath)
         return
 
 
-    def load_model(self, fpath, preproc=None):
-        """
-        load Transformers model
-        """
-        if preproc is None or not isinstance(preproc, TransformersPreprocessor):
-            raise ValueError('preproc arg is required to load Transformer models from disk. ' +\
-                              'Supply a TransformersPreprocessor instance. This is ' +\
-                              'either the third return value from texts_from* function or '+\
-                              'the result of calling ktrain.text.Transformer')
+    # 2020-07-07: removed, as core.Learner.load_model calls TransformerPreprocessor.load_model_and_configure
+    #def load_model(self, fpath, preproc=None):
+    #    """
+    #    load Transformers model
+    #    Args:
+    #      fpath(str): path to folder containing model files
+    #      preproc(TransformerPreprocessor): a TransformerPreprocessor instance.
+    #    """
+    #    if preproc is None or not isinstance(preproc, TransformersPreprocessor):
+    #        raise ValueError('preproc arg is required to load Transformer models from disk. ' +\
+    #                          'Supply a TransformersPreprocessor instance. This is ' +\
+    #                          'either the third return value from texts_from* function or '+\
+    #                          'the result of calling ktrain.text.Transformer')
 
 
-        self.model = _load_model(fpath, preproc=preproc)
-        return
+    #    self.model = _load_model(fpath, preproc=preproc)
+    #    return
 
 
 

@@ -191,6 +191,13 @@ def detect_lang(texts, sample_size=32):
     """
     detect language
     """
+
+    # convert sentence pairs
+    if isinstance(texts, (tuple, list, np.ndarray)) and len(texts) == 2:
+        texts = [texts[0], texts[1]]
+    elif isinstance(texts, (tuple, list, np.ndarray)) and isinstance(texts[0], (tuple, list, np.ndarray)) and len(texts[0]) == 2:
+        texts = [t[0] for t in texts]
+
     if isinstance(texts, (pd.Series, pd.DataFrame)):
         texts = texts.values
     if isinstance(texts, str): texts = [texts]
@@ -292,6 +299,14 @@ def read_text(filename):
                                                                                 verbose=verbose)
         decoded_text = decode_by_line(text, encoding=encoding)
     return decoded_text.strip()
+
+
+#tokenizer_filter = rs='!"#$%&()*+,-./:;<=>?@[\\]^_`{|}~\t\n'
+re_tok = re.compile(f'([{string.punctuation}“”¨«»®´·º½¾¿¡§£₤‘’])')
+def tokenize(s, join_tokens=False, join_char=' '): 
+    tokens = re_tok.sub(r' \1 ', s).split()
+    if join_tokens: tokens = join_char.join(tokens)
+    return tokens
 
 
 

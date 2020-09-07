@@ -21,6 +21,10 @@ class LRFinder:
         self.batch_num = 0
         self.beta = 0.98
 
+        # stats computed by _compute_stats
+        self.mg = None # index of minimum numerical gradient
+        self.ml = None # index of minimum loss
+
     def on_batch_end(self, batch, logs):
         # Log the learning rate
         lr = K.get_value(self.model.optimizer.lr)
@@ -35,6 +39,7 @@ class LRFinder:
 
 
         # Check whether the loss got too large or NaN
+        #print("\n%s:%s\n" % (smoothed_loss, self.stop_factor * self.best_loss))
         if self.batch_num > 1 and smoothed_loss > self.stop_factor * self.best_loss:
             self.model.stop_training = True
             return
@@ -53,7 +58,7 @@ class LRFinder:
             return
 
 
-    def find(self, train_data, steps_per_epoch, use_gen=False,
+    def find(self, train_data, steps_per_epoch, use_gen=False, class_weight=None,
              start_lr=1e-7, lr_mult=1.01, max_epochs=None, 
              batch_size=U.DEFAULT_BS, workers=1, use_multiprocessing=False, verbose=1):
         """
@@ -105,19 +110,17 @@ class LRFinder:
 
 
         if use_gen:
-            if version.parse(tf.__version__) < version.parse('2.0'):
-                fit_fn = self.model.fit_generator
-            else:
-                fit_fn = self.model.fit
-            
+            # *_generator methods are deprecated from TF 2.1.0
+            fit_fn = self.model.fit
             fit_fn(train_data, steps_per_epoch=steps_per_epoch, 
-                   epochs=epochs, 
+                   epochs=epochs, class_weight=class_weight,
                    workers=workers, use_multiprocessing=use_multiprocessing,
                    verbose=verbose,
                    callbacks=[callback])
         else:
             self.model.fit(train_data[0], train_data[1],
-                            batch_size=batch_size, epochs=epochs, verbose=verbose,
+                            batch_size=batch_size, epochs=epochs, class_weight=class_weight, 
+                            verbose=verbose,
                             callbacks=[callback])
 
 
@@ -127,6 +130,9 @@ class LRFinder:
 
         # Restore the original learning rate
         K.set_value(self.model.optimizer.lr, original_lr)
+
+        # compute stats for numerical estimates of lr
+        self._compute_stats()
 
 
         return 
@@ -141,6 +147,8 @@ class LRFinder:
             suggest(bool): will highlight numerical estimate
                            of best lr if True - methods adapted from fastai
         """
+        if not self.find_called: raise ValueError('Please call find first.')
+        
         fig, ax = plt.subplots()
         plt.ylabel("loss")
         plt.xlabel("learning rate (log scale)")
@@ -149,20 +157,58 @@ class LRFinder:
 
         if suggest:
             # this code was adapted from fastai: https://github.com/fastai/fastai
-            try: 
-                ml = np.argmin(self.losses)
-                mg = (np.gradient(np.array(self.losses[10:ml]))).argmin()
-            except:
+            if self.mg is None:
                 print("Failed to compute the gradients, there might not be enough points.\n" +\
                        "Plot displayed without suggestion.")
+                plt.show()
                 return
             else:
+                mg = self.mg
+                ml = self.ml
                 print('Two possible suggestions for LR from plot:')
                 print(f"\tMin numerical gradient: {self.lrs[mg]:.2E}")
-                ax.plot(self.lrs[mg],self.losses[mg], markersize=10,marker='o',color='red')
                 print(f"\tMin loss divided by 10: {self.lrs[ml]/10:.2E}")
+                ax.plot(self.lrs[mg],self.losses[mg], markersize=10,marker='o',color='red')
+                plt.show()
         return
 
+
+    def _compute_stats(self):
+        """
+        generates the index associated with minum numerical gradient and the 
+        index associated with minum loss.
+        Stored as mg and ml respectively
+        """
+        # this code was adapted from fastai: https://github.com/fastai/fastai
+        self.ml = np.argmin(self.losses)
+        try: 
+            self.mg = (np.gradient(np.array(self.losses[32:self.ml]))).argmin()
+        except:
+            self.mg = None
+        return
+
+
+    def estimate_lr(self):
+        """
+        Generates two numerical estimates of lr: 
+          1. lr associated with minum numerical gradient (None if gradient computation fails)
+          2. lr associated with minimum loss divided by 10
+        Args:
+          tuple: (float, float)
+
+          If gradient computation fails, first element of tuple will be None.
+        """
+        if not self.find_called(): raise ValueError('Please call find first.')
+        lr1 = None
+        lr2 = None
+        if self.mg is not None:
+            lr1 = self.lrs[self.mg]
+        lr2 = self.lrs[self.ml]/10
+        return (lr1, lr2)
+
+
+    def find_called(self):
+        return self.ml is not None
 
 
         

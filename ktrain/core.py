@@ -14,6 +14,8 @@ from .text.ner.predictor import NERPredictor
 from .text.ner.preprocessor import NERPreprocessor
 from .graph.predictor import NodePredictor, LinkPredictor
 from .graph.preprocessor import NodePreprocessor, LinkPreprocessor
+from .tabular.predictor import TabularPredictor
+from .tabular.preprocessor import TabularPreprocessor
 
 
 class Learner(ABC):
@@ -33,9 +35,29 @@ class Learner(ABC):
         self.history = None
 
         # save original weights of model
-        new_file, weightfile = tempfile.mkstemp()
-        self.model.save_weights(weightfile)
-        self._original_weights = weightfile
+        try:
+            new_file, weightfile = tempfile.mkstemp()
+            self.model.save_weights(weightfile)
+            self._original_weights = weightfile
+        except:
+            warnings.warn('Could not save original model weights')
+            self._original_weights = None
+
+    @property
+    def _monitor_metrics(self):
+        """
+        monitor metrics
+        """
+        metrics = ['loss']
+        try:
+            m = U.metrics_from_model(self.model)
+            if isinstance(m, list): metrics.extend(m)
+        except:
+            pass
+        if self.val_data is not None:
+            for m in metrics[:]:
+                metrics.append('val_%s' % (m))
+        return metrics
 
 
     def get_weight_decay(self):
@@ -62,13 +84,51 @@ class Learner(ABC):
         
 
 
+    def evaluate(self, test_data=None, print_report=True, save_path='ktrain_classification_report.csv', class_names=[]):
+        """
+        alias for self.validate().
+        Returns confusion matrix and optionally prints
+        a classification report.
+        This is currently only supported for binary and multiclass
+        classification, not multilabel classification.
 
-    def validate(self, val_data=None, print_report=True, class_names=[]):
+        By default, this uses val_data, as supplied to ktrain.get_learner().
+        Other validation or test data can be optionally be supplied as argument via <test_data> argument.
+        Supply class_names to include labels instead of intenger class integer values in classification report.
+        Args:
+          test_data(Dataset|np.ndarray): test or validation data.  If None, self.val_data is used.
+          print_report(bool): If True, classification report will be printed. If False, report will be saved to CSV 
+                              at save_path. Not applicable to regression models.
+                              Not applicable to regression models.
+          save_path(str): Classification report will be saved to this file path/name if print_report=False
+                          Not applicable to regression models.
+          class_names(list): list of class names to be used in classification report instead of 
+                             class integer IDs.
+        """
+        return self.validate(val_data=test_data, print_report=print_report, class_names=class_names)
+
+
+
+    def validate(self, val_data=None, 
+                 print_report=True,
+                 save_path='ktrain_classification_report.csv', 
+                 class_names=[]):
         """
         Returns confusion matrix and optionally prints
         a classification report.
         This is currently only supported for binary and multiclass
         classification, not multilabel classification.
+
+        By default, this uses val_data, as supplied to ktrain.get_learner().
+        Other validation or test data can be optionally be supplied as argument.
+        Supply class_names to include labels instead of intenger class integer values in classification report.
+        Args:
+          val_data(Dataset|np.ndarray): validation data.  If None, self.val_data is used.
+          print_report(bool): If True, classification report will be printed. If False, report will be saved to CSV 
+                              at save path. Not applicable to regression models.
+          save_path(str): Classification report will be saved to this file path/name if print_report=False
+          class_names(list): list of class names to be used in classification report instead of 
+                             class integer IDs.
         """
         if val_data is not None:
             val = val_data
@@ -77,10 +137,11 @@ class Learner(ABC):
 
         classification, multilabel = U.is_classifier(self.model)
         if not classification:
-            warnings.warn('learner.validate is only for classification problems. ' 
-                          'For regression, etc., use learner.predict and learner.ground_truth '
-                          'to manually validate.')
-            return
+            #warnings.warn('learner.validate is only for classification problems. ' 
+                          #'For regression, etc., use learner.predict and learner.ground_truth '
+                          #'to manually validate.')
+            #return
+            pass
             
         if U.is_multilabel(val) or multilabel:
             warnings.warn('multilabel confusion matrices not yet supported')
@@ -89,22 +150,45 @@ class Learner(ABC):
         y_true = self.ground_truth(val_data=val)
         y_pred = np.squeeze(y_pred)
         y_true = np.squeeze(y_true)
+
+
+        # regression evaluation
+        if not classification:
+            from sklearn.metrics import mean_absolute_error, mean_squared_error
+            regout = []
+            metrics = U.metrics_from_model(self.model)
+            for m in metrics:
+                if m in ['mae', 'mean_absolute_error']:
+                    regout.append( (m, mean_absolute_error(y_true,  y_pred)) )
+                elif m in ['mse', 'mean_squared_error']:
+                    regout.append( (m, mean_squared_error(y_true,  y_pred)) )
+            if not regout:
+                warnings.warn('%s is not supported by validate/evaluate - falling back to MAE')
+                regout.append( ('mae', mean_absolute_error(y_true,  y_pred)) )
+            return regout
+
+
         if len(y_pred.shape) == 1:
             y_pred = np.where(y_pred > 0.5, 1, 0)
             y_true = np.where(y_true > 0.5, 1, 0)
         else:
             y_pred = np.argmax(y_pred, axis=1)
             y_true = np.argmax(y_true, axis=1)
-        if print_report:
+        if print_report or save_path is not None:
             if class_names:
                 try:
                     class_names = [str(s) for s in class_names]
                 except:
                     pass
-                report = classification_report(y_true, y_pred, target_names=class_names)
+                report = classification_report(y_true, y_pred, target_names=class_names, output_dict=not print_report)
             else:
-                report = classification_report(y_true, y_pred)
-            print(report)
+                report = classification_report(y_true, y_pred, output_dict=not print_report)
+            if print_report: 
+                print(report)
+            else:
+                df = pd.DataFrame(report).transpose()
+                df.to_csv(save_path)
+                print('classification report saved to: %s' % (save_path))
             cm_func = confusion_matrix
         cm =  confusion_matrix(y_true,  y_pred)
         return cm
@@ -166,10 +250,11 @@ class Learner(ABC):
         # compute loss
         # this doesn't work in tf.keras 1.14
         #losses = self.model.loss_functions[0](tf.convert_to_tensor(y_true), tf.convert_to_tensor(y_pred))
-        if U.is_tf_keras():
-            L = self.model.loss_functions[0].fn
-        else:
-            L = self.model.loss_functions[0]
+        #if U.is_tf_keras():
+            #L = self.model.loss_functions[0].fn
+        #else:
+            #L = self.model.loss_functions[0]
+        L = U.loss_fn_from_model(self.model)
         losses = L(tf.convert_to_tensor(y_true), tf.convert_to_tensor(y_pred))
         if DISABLE_V2_BEHAVIOR:
             losses = tf.Session().run(losses)
@@ -215,25 +300,48 @@ class Learner(ABC):
 
     def view_top_losses(self, n=4, preproc=None, val_data=None):
         """
-        Views observations with top losses in validation set.
+        View observations with top losses in validation set.
         Musta be overridden by Learner subclasses.
         """
         raise NotImplementedError('view_top_losses must be overriden by Learner subclass')
 
 
+    def _make_model_folder(self, fpath):
+        if os.path.isfile(fpath):
+            raise ValueError(f'There is an existing file named {fpath}. ' +\
+                              'Please use dfferent value for fpath.')
+        elif os.path.exists(fpath):
+            #warnings.warn('model is being saved to folder that already exists: %s' % (fpath))
+            pass
+        elif not os.path.exists(fpath):
+            os.makedirs(fpath)
+
+
     def save_model(self, fpath):
         """
         a wrapper to model.save
+        Args:
+          fpath(str): path to folder in which to save model
+        Returns:
+          None
         """
-        self.model.save(fpath, save_format='h5')
+        self._make_model_folder(fpath)
+        self.model.save(os.path.join(fpath, U.MODEL_NAME), save_format='h5')
         return
 
 
-    def load_model(self, fpath):
+    def load_model(self, fpath, custom_objects=None, **kwargs):
         """
-        a wrapper to load_model
+        loads model from folder.
+        Note: **kwargs included for backwards compatibility only, as TransformerTextClassLearner.load_model was removed in v0.18.0.
+        Args:
+          fpath(str): path to folder containing model
+          custom_objects(dict): custom objects required to load model.
+                                For models included with ktrain, this is populated automatically
+                                and can be disregarded.
+        
         """
-        self.model = _load_model(fpath, train_data=self.train_data)
+        self.model = _load_model(fpath, train_data=self.train_data, custom_objects=custom_objects)
         return
 
     def _is_adamlike(self):
@@ -261,13 +369,15 @@ class Learner(ABC):
                 #self.model.compile(optimizer=self.model.optimizer,
                                    #loss=self.model.loss,
                                    #metrics=metrics)
-        metrics = [m.name for m in self.model.metrics] if U.is_tf_keras() else self.model.metrics
-        if wd is not None and type(self.model.optimizer).__name__ != 'AdamWeightDecay':
+        metrics = U.metrics_from_model(self.model)
+        if wd is not None and wd > 0 and type(self.model.optimizer).__name__ != 'AdamWeightDecay':
             warnings.warn('recompiling model to use AdamWeightDecay as opimizer with weight decay of %s' % (wd) )
             optimizer = U.get_default_optimizer(wd=wd)
-        elif wd is not None:
+        elif wd is not None and wd > 0:
             optimizer = U.get_default_optimizer(wd=wd)
-        else:
+        elif wd is not None and wd == 0:
+            optimizer = U.DEFAULT_OPT
+        else: # wd is None -> don't modify optimizer
             optimizer = self.model.optimizer
         self.model.compile(optimizer=optimizer,
                            loss=self.model.loss,
@@ -348,23 +458,10 @@ class Learner(ABC):
         return
 
 
-    def reset_weights(self, nosave=False, verbose=1):
+    def reset_weights(self, verbose=1):
         """
-        Re-initializes network - use with caution, as this may not be robust
+        Re-initializes network with original weights
         """
-        #initial_weights = self.model.get_weights()
-        #backend_name = K.backend()
-        #if backend_name == 'tensorflow': 
-            #k_eval = lambda placeholder: placeholder.eval(session=K.get_session())
-        #elif backend_name == 'theano': 
-            #k_eval = lambda placeholder: placeholder.eval()
-        #else: 
-            #raise ValueError("Unsupported backend")
-        #new_weights = [k_eval(glorot_uniform()(w.shape)) for w in initial_weights]
-        #if nosave: return new_weights
-        #self.model.set_weights(new_weights)
-        #self.history = None
-        #print('Weights of moedl have been reset.')
 
         if os.path.isfile(self._original_weights):
             self.model.load_weights(self._original_weights)
@@ -377,8 +474,8 @@ class Learner(ABC):
 
 
 
-    def lr_find(self, start_lr=1e-7, lr_mult=1.01, max_epochs=None, 
-                stop_factor=4, show_plot=False, verbose=1):
+    def lr_find(self, start_lr=1e-7, lr_mult=1.01, max_epochs=None, class_weight=None,
+                stop_factor=4, show_plot=False, suggest=False, restore_weights_only=False, verbose=1):
         """
         Plots loss as learning rate is increased.  Highest learning rate 
         corresponding to a still falling loss should be chosen.
@@ -403,25 +500,35 @@ class Learner(ABC):
                                Default is None. Set max_epochs to an integer
                                (e.g., 5) if lr_find is taking too long
                                and running for more epochs than desired.
+            class_weight(dict): class_weight parameter passed to model.fit
+                                for imbalanced datasets.
             stop_factor(int): factor used to determine threhsold that loss 
                               must exceed to stop training simulation.
                               Increase this if loss is erratic and lr_find
                               exits too early.
             show_plot (bool):  If True, automatically invoke lr_plot
+            restore_weights_only(bool): If True, when training simulation is complete,
+                                        the model weights only are restored, but not
+                                        the original optimizer weights.  
+                                        In at least a few cases, this seems to improve performance
+                                        when actual training begins. Further investigation is needed,
+                                        so it is False by default.
             verbose (bool): specifies how much output to print
         Returns:
-            float:  Numerical estimate of best lr.  
-                    The lr_plot method should be invoked to
-                    identify the maximal loss associated with falling loss.
+            None
         """
 
         U.vprint('simulating training for different learning rates... this may take a few moments...',
                 verbose=verbose)
-
         # save current weights and temporarily restore original weights
-        new_file, weightfile = tempfile.mkstemp()
-        self.model.save_weights(weightfile)
-        #self.model.load_weights(self._original_weights)
+        # dep_fix: temporarily use save_model instead of save_weights as default due to https://github.com/tensorflow/tensorflow/issues/41116
+        _weights_only=True
+        if restore_weights_only:
+            new_file, weightfile = tempfile.mkstemp()
+            self.model.save_weights(weightfile)
+        else:
+            temp_folder = tempfile.mkdtemp()
+            self.save_model(temp_folder)
 
 
          # compute steps_per_epoch
@@ -449,29 +556,53 @@ class Learner(ABC):
                                 use_gen=use_gen,
                                 start_lr=start_lr, lr_mult=lr_mult, 
                                 max_epochs=max_epochs,
+                                class_weight=class_weight,
                                 workers=self.workers, 
                                 use_multiprocessing=self.use_multiprocessing, 
                                 batch_size=self.batch_size,
                                 verbose=verbose)
         except KeyboardInterrupt:
             # re-load current weights
-            self.model.load_weights(weightfile)
+            #self.model.load_weights(weightfile)
+            self.load_model(temp_folder)
             return
 
         # re-load current weights
-        self.model.load_weights(weightfile)
+        # dep_fix: temporarily use load_model instead of load_weights as default due to https://github.com/tensorflow/tensorflow/issues/41116
+        if restore_weights_only:
+            self.model.load_weights(weightfile)
+        else:
+            self.load_model(temp_folder)
 
         # instructions to invoker
         U.vprint('\n', verbose=verbose)
         U.vprint('done.', verbose=verbose)
         if show_plot:
-            U.vprint('Visually inspect the loss plot to help identify the maximal learning rate', verbose=verbose)
+            U.vprint('Visually inspect loss plot and select learning rate associated with falling loss', verbose=verbose)
             self.lr_plot()
         else:
             U.vprint('Please invoke the Learner.lr_plot() method to visually inspect '
                   'the loss plot to help identify the maximal learning rate '
                   'associated with falling loss.', verbose=verbose)
-        return 
+        return
+
+
+    def lr_estimate(self):
+        """
+        Return numerical estimates of lr using two different methods:
+            1. learning rate associated with minimum numerical gradient
+            2. learning rate associated with minimum loss divided by 10
+        Since neither of these methods are fool-proof and can 
+        potentially return bad estimates, it is recommended that you 
+        examine the plot generated by lr_plot to estimate the learning rate.
+        Returns:
+          tuple: tuple of the form (float, float), where 
+            First element is lr associated with minimum numerical gradient (None if gradient computation fails).
+            Second element is lr associated with minimum loss divided by 10.
+        """
+        if self.lr_finder is None or not self.lr_finder.find_called(): raise ValueError('Please call lr_find first.')
+        return self.lr_finder.estimate_lr()
+        
 
 
     def lr_plot(self, n_skip_beginning=10, n_skip_end=5, suggest=False):
@@ -487,6 +618,7 @@ class Learner(ABC):
                            of best lr if True - methods adapted from fastai
           
         """
+        if self.lr_finder is None or not self.lr_finder.find_called(): raise ValueError('Please call lr_find first.')
         self.lr_finder.plot_loss(n_skip_beginning=n_skip_beginning,
                                  n_skip_end=n_skip_end, suggest=suggest)
         return
@@ -540,6 +672,7 @@ class Learner(ABC):
         """
         prints the layers of the model along with indices
         """
+        if show_wd: warnings.warn('set_weight_decay now uses AdamWeightDecay instead of kernel_regularizers.')
         for i, layer in enumerate(self.model.layers):
             if show_wd and hasattr(layer, 'kernel_regularizer'):
                 reg = layer.kernel_regularizer
@@ -587,6 +720,7 @@ class Learner(ABC):
 
 
     def _cb_sgdr(self, max_lr, steps_per_epoch, cycle_len, cycle_mult, lr_decay=1.0, callbacks=[]):
+        if callbacks and 'SGDRScheduler' in [type(cb).__name__ for cb in callbacks]: return callbacks
         # configuration
         min_lr = 1e-9
         if max_lr <= min_lr: min_lr = max_lr/10
@@ -606,6 +740,7 @@ class Learner(ABC):
 
 
     def _cb_checkpoint(self, folder, callbacks=[]):
+        if callbacks and 'ModelCheckpoint' in [type(cb).__name__ for cb in callbacks]: return callbacks
         if folder is not None:
             os.makedirs(folder, exist_ok=True)
             if not isinstance(callbacks, list): callbacks = []
@@ -617,6 +752,7 @@ class Learner(ABC):
 
 
     def _cb_earlystopping(self, early_stopping, callbacks=[]):
+        if callbacks and 'EarlyStopping' in [type(cb).__name__ for cb in callbacks]: return callbacks
         if early_stopping:
             if not isinstance(callbacks, list): callbacks = []
             #if StrictVersion(keras.__version__) >= StrictVersion('2.2.3'):
@@ -636,23 +772,18 @@ class Learner(ABC):
         return callbacks
 
 
-    def _prepare(self, data, mode='train'):
+    def _prepare(self, data, train=True):
         """
         Subclasses can override this method if data
         needs to be specially-prepared prior to invoking fit methods
         Args:
           data:  dataset
-          mode: either 'train' or 'valid'
+          train(bool):  If True, prepare for training. Otherwise, prepare for evaluation.
         """
         if data is None: return None
 
         if hasattr(data, 'to_tfdataset'):
-            shuffle=True
-            repeat = True
-            if mode != 'train':
-                shuffle = False
-                repeat = False
-            return data.to_tfdataset(shuffle=shuffle, repeat=repeat)
+            return data.to_tfdataset(train=train)
         else:
             return data
 
@@ -763,7 +894,7 @@ class Learner(ABC):
                                       NOTE: If reduce_on_plateau is also enabled, then
                                       early_stopping must be greater than reduce_on_plateau.
                                       Example: early_stopping=6, reduce_on_plateau=3.
-            recuce_on_plateau (int):  If not None, will lower learning rate when
+            reduce_on_plateau (int):  If not None, will lower learning rate when
                                       when validation loss fails to improve after
                                       the specified number of epochs.
                                       NOTE: If early_stopping is enabled, then
@@ -782,7 +913,7 @@ class Learner(ABC):
                                         File name will be of the form: 
                                         weights-{epoch:02d}-{val_loss:.2f}.hdf5
             monitor (str):              what metric to monitor for early_stopping
-                                        and reduce_on_plateau (either val_loss or val_accuracy).
+                                        and reduce_on_plateau. Defaults to 'val_loss'.
                                         Only used if early_stopping or reduce_on_plateau
                                         is enabled.
             class_weight (dict):       Optional dictionary mapping class indices (integers) to a weight (float) 
@@ -795,9 +926,6 @@ class Learner(ABC):
                            'optimizer is not "Adam-like" with beta_1 param')
             cycle_momentum=False
 
-        # check monitor
-        if monitor not in [VAL_ACC_NAME, 'val_loss']:
-            raise ValueError("monitor must be one of {%s, val_loss'}" % (VAL_ACC_NAME))
 
         # setup learning rate policy 
         num_samples = U.nsamples_from_data(self.train_data)
@@ -821,11 +949,12 @@ class Learner(ABC):
                           'Either reduce reduce_on_plateau or set early_stopping ' +\
                           'to be higher.')
 
-        if self.val_data is None and monitor in ['val_loss', VAL_ACC_NAME] and\
-           (reduce_on_plateau is not None or early_stopping is not None):
-            raise Exception('cannot monitor %s ' % (monitor)  +\
-                            'without validation data - please change monitor')
-
+        # check monitor
+        if reduce_on_plateau is not None or early_stopping is not None:
+            if monitor.startswith('val_') and self.val_data is None:
+                raise ValueError('monitor is %s but no val_data was supplied.\nChange monitor or supply val_data to get_learner function.' % monitor)
+            if monitor != 'val_loss' and  monitor not in self._monitor_metrics:
+                raise ValueError("monitor must be one of {%s}" % (self._monitor_metrics))
 
 
         # setup callbacks for learning rates and early stopping
@@ -890,8 +1019,10 @@ class Learner(ABC):
         if U.is_iter(val):
             if hasattr(val, 'reset'): val.reset()
             steps = np.ceil(U.nsamples_from_data(val)/val.batch_size)
-            result = self.model.predict_generator(self._prepare(val, mode='valid'), 
-                                                steps=steps)
+            # *_generator methods are deprecated from TF 2.1.0
+            #result = self.model.predict_generator(self._prepare(val, train=False), 
+                                                #steps=steps)
+            result = self.model.predict(self._prepare(val, train=False), steps=steps)
             return result
         else:
             return self.model.predict(val[0], batch_size=self.eval_batch_size)
@@ -969,21 +1100,23 @@ class ArrayLearner(Learner):
         # setup learning rate schedule
         epochs = self._check_cycles(n_cycles, cycle_len, cycle_mult)
         self.set_lr(lr)
+
+        # set call backs
+        kcallbacks = callbacks if callbacks else None
         kcallbacks = self._cb_sgdr(lr, 
-                                  np.ceil(len(x_train)/self.batch_size), 
-                                  cycle_len, cycle_mult, lr_decay=lr_decay, callbacks=None)
-        sgdr = kcallbacks[0] if kcallbacks is not None else None
+                                  np.ceil(len(x_train)/self.batch_size),
+                                  cycle_len, cycle_mult, lr_decay, callbacks=kcallbacks)
         kcallbacks = self._cb_checkpoint(checkpoint_folder, callbacks=kcallbacks)
         kcallbacks = self._cb_earlystopping(early_stopping, callbacks=kcallbacks)
-        if callbacks:
-            if kcallbacks is None: kcallbacks = []
-            kcallbacks.extend(callbacks)
+        sgdr = [cb for cb in kcallbacks if type(cb).__name__ == 'SGDRScheduler'] if kcallbacks else None
+        sgdr = sgdr[0] if sgdr else None
+
 
         # train model
         with warnings.catch_warnings():
             warnings.filterwarnings('ignore', message='.*Check your callbacks.*')
             hist = self.model.fit(self._prepare(x_train), 
-                                  self._prepare(y_train, mode='valid'),
+                                  self._prepare(y_train, train=False),
                                   batch_size=self.batch_size,
                                   epochs=epochs,
                                   validation_data=validation, verbose=verbose, 
@@ -1104,7 +1237,7 @@ class GenLearner(Learner):
             lr_decay=1.0, checkpoint_folder=None, early_stopping=None, 
             class_weight=None, callbacks=[], verbose=1):
         """
-        Trains the model. By default, fit is simply a wrapper for model.fit_generator.
+        Trains the model. By default, fit is simply a wrapper for model.fit (for generators/sequences).
         When cycle_len parameter is supplied, an SGDR learning rate schedule is used.
 
         lr (float): learning rate 
@@ -1145,15 +1278,19 @@ class GenLearner(Learner):
 
         epochs = self._check_cycles(n_cycles, cycle_len, cycle_mult)
         self.set_lr(lr)
+
+
+        # set call backs
+        kcallbacks = callbacks if callbacks else None
         kcallbacks = self._cb_sgdr(lr, 
                                   steps_per_epoch,
-                                  cycle_len, cycle_mult, lr_decay, callbacks=None)
-        sgdr = kcallbacks[0] if kcallbacks is not None else None
+                                  cycle_len, cycle_mult, lr_decay, callbacks=kcallbacks)
         kcallbacks = self._cb_checkpoint(checkpoint_folder, callbacks=kcallbacks)
         kcallbacks = self._cb_earlystopping(early_stopping, callbacks=kcallbacks)
-        if callbacks:
-            if kcallbacks is None: kcallbacks = []
-            kcallbacks.extend(callbacks)
+        sgdr = [cb for cb in kcallbacks if type(cb).__name__ == 'SGDRScheduler'] if kcallbacks else None
+        sgdr = sgdr[0] if sgdr else None
+        #if kcallbacks: print([type(cb).__name__ for cb in kcallbacks])
+
             
         # MNIST times per epoch on Titan V
         # workers=4, usemp=True 9 sec.
@@ -1166,26 +1303,12 @@ class GenLearner(Learner):
         # train model
         with warnings.catch_warnings():
             warnings.filterwarnings('ignore', message='.*Check your callbacks.*')
-            # bug in TF2 causes fit_generator to be very slow
-            # https://github.com/tensorflow/tensorflow/issues/33024
-            if version.parse(tf.__version__) < version.parse('2.0'):
-                fit_fn = self.model.fit_generator
-            else:
-                # TF bug with using multiple inputs with utils.Sequence and model.fit
-                # TODO: check data and proceed accordingly
-                # potential patch is to have Sequence subclasses return tuple(batch_x), y
-                if U.is_nodeclass(model=self.model, data=self.train_data) or\
-                   U.is_ner(model=self.model, data=self.train_data):
-                    fit_fn = self.model.fit_generator
-                else:
-                    fit_fn = self.model.fit
-                # fixed in 2.1.0
-                #fit_fn = self.model.fit
+            fit_fn = self.model.fit
             hist = fit_fn(self._prepare(self.train_data),
                                         steps_per_epoch = steps_per_epoch,
                                         validation_steps = validation_steps,
                                         epochs=epochs,
-                                        validation_data=self._prepare(self.val_data, mode='valid'),
+                                        validation_data=self._prepare(self.val_data, train=False),
                                         workers=self.workers,
                                         use_multiprocessing=self.use_multiprocessing, 
                                         verbose=verbose,
@@ -1207,7 +1330,7 @@ class GenLearner(Learner):
     def layer_output(self, layer_id, example_id=0, batch_id=0, use_val=False):
         """
         Prints output of layer with index <layer_id> to help debug models.
-        Uses first example (example_id=0) from training set, by default.
+        Uses first example (example_id=0) from first batch from training set, by default.
         """
                                                                                 
         inp = self.model.layers[0].input
@@ -1297,7 +1420,7 @@ def get_predictor(model, preproc, batch_size=U.DEFAULT_BS):
     # check arguments
     if not isinstance(model, Model):
         raise ValueError('model must be of instance Model')
-    if not isinstance(preproc, (ImagePreprocessor,TextPreprocessor, NERPreprocessor, NodePreprocessor, LinkPreprocessor)):
+    if not isinstance(preproc, (ImagePreprocessor,TextPreprocessor, NERPreprocessor, NodePreprocessor, LinkPreprocessor, TabularPreprocessor)):
         raise ValueError('preproc must be instance of ktrain.preprocessor.Preprocessor')
     if isinstance(preproc, ImagePreprocessor):
         return ImagePredictor(model, preproc, batch_size=batch_size)
@@ -1310,25 +1433,38 @@ def get_predictor(model, preproc, batch_size=U.DEFAULT_BS):
         return NodePredictor(model, preproc, batch_size=batch_size)
     elif isinstance(preproc, LinkPreprocessor):
         return LinkPredictor(model, preproc, batch_size=batch_size)
+    elif isinstance(preproc, TabularPreprocessor):
+        return TabularPredictor(model, preproc, batch_size=batch_size)
+
     else:
         raise Exception('preproc of type %s not currently supported' % (type(preproc)))
 
 
-def load_predictor(fname, batch_size=U.DEFAULT_BS):
+def load_predictor(fpath, batch_size=U.DEFAULT_BS):
     """
     Loads a previously saved Predictor instance
     Args
-      fname(str): predictor path name (value supplied to predictor.save)
+      fpath(str): predictor path name (value supplied to predictor.save)
+                  From v0.16.x, this is always the path to a folder.
+                  Pre-v0.16.x, this is the base name used to save model and .preproc instance.
       batch_size(int): batch size to use for predictions. default:32
     """
 
     # load the preprocessor
     preproc = None
-    with open(fname +'.preproc', 'rb') as f:
-        preproc = pickle.load(f)
+    try:
+        preproc_name = os.path.join(fpath, U.PREPROC_NAME)
+        with open(preproc_name, 'rb') as f: preproc = pickle.load(f)
+    except:
+        try:
+            preproc_name = fpath +'.preproc'
+            #warnings.warn('could not load .preproc file as %s - attempting to load as %s' % (os.path.join(fpath, U.PREPROC_NAME), preproc_name))
+            with open(preproc_name, 'rb') as f: preproc = pickle.load(f)
+        except:
+            raise Exception('Could not find a .preproc file in either the post v0.16.x loction (%s) or pre v0.16.x location (%s)' % (os.path.join(fpath, U.PREPROC_NAME), fpath+'.preproc'))
 
     # load the model
-    model = _load_model(fname, preproc=preproc)
+    model = _load_model(fpath, preproc=preproc)
 
 
     # preprocessing functions in ImageDataGenerators are not pickable
@@ -1347,7 +1483,7 @@ def load_predictor(fname, batch_size=U.DEFAULT_BS):
     # return the appropriate predictor
     if not isinstance(model, Model):
         raise ValueError('model must be of instance Model')
-    if not isinstance(preproc, (ImagePreprocessor, TextPreprocessor, NERPreprocessor, NodePreprocessor, LinkPreprocessor)):
+    if not isinstance(preproc, (ImagePreprocessor, TextPreprocessor, NERPreprocessor, NodePreprocessor, LinkPreprocessor, TabularPreprocessor)):
         raise ValueError('preproc must be instance of ktrain.preprocessor.Preprocessor')
     if isinstance(preproc, ImagePreprocessor):
         return ImagePredictor(model, preproc, batch_size=batch_size)
@@ -1359,6 +1495,8 @@ def load_predictor(fname, batch_size=U.DEFAULT_BS):
         return NodePredictor(model, preproc, batch_size=batch_size)
     elif isinstance(preproc, LinkPreprocessor):
         return LinkPredictor(model, preproc, batch_size=batch_size)
+    elif isinstance(preproc, TabularPreprocessor):
+        return TabularPredictor(model, preproc, batch_size=batch_size)
     else:
         raise Exception('preprocessor not currently supported')
 
@@ -1386,13 +1524,15 @@ def release_gpu_memory(device=0):
     return
 
 
-def _load_model(fname, preproc=None, train_data=None):
+def _load_model(fpath, preproc=None, train_data=None, custom_objects=None):
     if not preproc and not train_data:
         raise ValueError('Either preproc or train_data is required.')
-    custom_objects=None
-    if preproc and isinstance(preproc, TransformersPreprocessor):
-        # note: with transformer models, fname is actually a directory
-        model = preproc.get_model(fpath=fname)
+    if (preproc and isinstance(preproc, TransformersPreprocessor)) or \
+       (train_data and U.is_huggingface(data=train_data)):
+        if preproc:
+            model = preproc.get_model(fpath=fpath)
+        else:
+            model = TransformersPreprocessor.load_model_and_configure_from_data(fpath, train_data)
         return model
     elif (preproc and (isinstance(preproc, BERTPreprocessor) or \
                     type(preproc).__name__ == 'BERTPreprocessor')) or\
@@ -1420,10 +1560,15 @@ def _load_model(fname, preproc=None, train_data=None):
     custom_objects['AdamWeightDecay'] = AdamWeightDecay
     try:
         try:
-            model = load_model(fname, custom_objects=custom_objects)
+            model = load_model(os.path.join(fpath, U.MODEL_NAME), custom_objects=custom_objects)
         except:
-            # for bilstm models without CRF layer on TF2 where CRF is not supported 
-            model = load_model(fname, custom_objects={'AdamWeightDecay':AdamWeightDecay})
+            try:
+                # pre-0.16: model fpath was file name of model not folder for non-Transformer models
+                #warnings.warn('could not load model as %s - attempting to load model as %s' % (os.path.join(fpath, U.MODEL_NAME), fpath))
+                model = load_model(fpath, custom_objects=custom_objects)
+            except:
+                # for bilstm models without CRF layer on TF2 where CRF is not supported 
+                model = load_model(fpath, custom_objects={'AdamWeightDecay':AdamWeightDecay})
     except Exception as e:
         print('Call to keras.models.load_model failed.  '
               'Try using the learner.model.save_weights and '

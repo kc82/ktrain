@@ -1,21 +1,28 @@
 # Example Notebooks
 
-This directory contains various example notebooks using *ktrain*.  The directory currently has three folders:
+This directory contains various example notebooks using *ktrain*.  The directory currently has four folders:
 - `text`:  
   - [text classification](#textclass): examples using various text classification models and datasets
   - [text regression](#textregression): example for predicting continuous value purely from text
   - [text sequence labeling](#seqlab):  sequence tagging models
+  - [sentence pair classification](#sentpair):  sentence pair classification for tasks such as paraphrase or sarcasm detection
   - [topic modeling](#lda):  unsupervised learning from unlabeled text data
   - [document similarity with one-class learning](#docsim): given a sample of interesting documents, find and score new documents that are semantically similar to it using One-Class text classification
   - [document recommender system](#docrec):  given text from a sample document, recommend documents that are semantically similar to it from a larger corpus 
   - [Shallow NLP](#shallownlp):  a small collection of miscellaneous text utilities amenable to being used on machines with only a CPU available (no GPU required)
   - [Text Summarization](#bart):  an example of text summarization using a pretrained BART model
   - [Open-Domain Question-Answering](#textqa):  ask questions to a large text corpus and receive exact candidate answers
+  - [Zero-Shot Learning](#zsl):  classify documents by user-supplied topics **without** any training examples
+  - [Language Translation](#translation): an example of language translation using pretrained MarianMT models
 - `vision`:  
   - [image classification](#imageclass):  models for image datasetsimage classification examples using various models and datasets
+  - [image regression](#imageregression): example of predicting numerical values purely from images/photos
 - `graphs`: 
   - [node classification](#-graph-node-classification-datasets): node classification in graphs or networks
   - [link prediction](#-graph-link-prediction-datasets): link prediction in graphs or networks
+- `tabular`: 
+  - [classification](#-tabular-classification-datasets): classification for tabular data
+  - [regression](#-tabular-regression-datasets): regression for tabular data
 
 
 ## Text Data
@@ -92,6 +99,13 @@ The objective of the CoNLL2003 task is to classify sequences of words as belongi
 - [CoNLL2002_Dutch-BiLSTM.ipynb](https://github.com/amaiya/ktrain/tree/master/examples/text):  A Bidirectional LSTM model that uses pretrained BERT embeddings along with pretrained fasttext word embeddings - both for Dutch.
 
 
+### <a name="sentpair"></a> Sentence Pair Classification
+
+#### [Microsoft Research Paraphrase Corpus (MRPC)](https://www.microsoft.com/en-us/download/details.aspx?id=52398):  Paraphrase Detection
+
+- [MRPC-BERT.ipynb](https://github.com/amaiya/ktrain/tree/master/examples/text):  Using BERT for sentence pair classification on MRPC dataset
+
+
 ### <a name="lda"></a> Topic Modeling
 
 #### [20 News Groups](http://qwone.com/~jason/20Newsgroups/): unsupervised learning on 20newsgroups corpus
@@ -124,6 +138,8 @@ The objective of the CoNLL2003 task is to classify sequences of words as belongi
 
 ### <a name="bart"></a>Text Summarization with pretrained BART: [text_summarization_with_bart.ipynb](https://github.com/amaiya/ktrain/tree/master/examples/text)
 ### <a name="textqa"></a>Open-Domain Question-Answering: [question_answering_with_bert.ipynb](https://github.com/amaiya/ktrain/tree/master/examples/text)
+### <a name="zsl"></a>Zero-Shot Learning: [zero_shot_learning_with_nli.ipynb](https://github.com/amaiya/ktrain/tree/master/examples/text)
+### <a name="translation"></a>Language Translation: [language_translation_example.ipynb](https://github.com/amaiya/ktrain/tree/master/examples/text)
 
 
 ## Vision Data
@@ -133,8 +149,17 @@ The objective of the CoNLL2003 task is to classify sequences of words as belongi
 #### [Dogs vs. Cats](https://www.kaggle.com/c/dogs-vs-cats):  Binary Classification
 - [dogs_vs_cats-ResNet50.ipynb](https://github.com/amaiya/ktrain/tree/master/examples/vision):  ResNet50 pretrained on ImageNet.  
 
+#### [Dogs vs. Cats](https://www.kaggle.com/c/dogs-vs-cats):  Binary Classification
+- [dogs_vs_cats-MobileNet.ipynb](https://github.com/amaiya/ktrain/tree/master/examples/vision):  MobileNet pretrained on ImageNet on filtered version of Dogs vs. Cats dataset
+
 #### [MNIST](http://yann.lecun.com/exdb/mnist/):  Multiclass Classification
 - [mnist-WRN22.ipynb](https://github.com/amaiya/ktrain/tree/master/examples/vision):  A randomly-initialized Wide Residual Network applied to MNIST
+
+#### [MNIST](http://yann.lecun.com/exdb/mnist/):  Multiclass Classification
+- [mnist-image_from_array_example.ipynb](https://github.com/amaiya/ktrain/tree/master/examples/vision):  Build an MNIST model using `images_from_array`
+
+#### [MNIST](http://yann.lecun.com/exdb/mnist/):  Multiclass Classification
+- [mnist-tf_workflow.ipynb](https://github.com/amaiya/ktrain/tree/master/examples/vision):  Illustrates how *ktrain* can be used in minimally-invasive way with normal TF workflow
 
 #### [CIFAR10](https://www.cs.toronto.edu/~kriz/cifar.html):  Multiclass Classification
 - [cifar10-WRN22.ipynb](https://github.com/amaiya/ktrain/tree/master/examples/vision):  A randomly-initialized Wide Residual Network applied to CIFAR10
@@ -148,6 +173,12 @@ The objective of the CoNLL2003 task is to classify sequences of words as belongi
 The Kaggle Planet dataset consists of satellite images - each of which are categorized into multiple categories.
 Image labels are in the form of a CSV containing paths to images.
 - [planet-ResNet50.ipynb](https://github.com/amaiya/ktrain/tree/master/examples/vision):  Using a pretrained ResNet50 model for multi-label classification.
+
+
+### <a name="imageregression"></a> Image Regression
+
+#### [Age Prediction](http://aicip.eecs.utk.edu/wiki/UTKFace):  Image Regression 
+- [utk_faces_age_prediction-resnet50.ipynb](https://github.com/amaiya/ktrain/tree/master/examples/vision):  ResNet50 pretrained on ImageNet for age prediction  using UTK Face dataset
 
 
 ## Graph Data
@@ -183,4 +214,37 @@ In the Cora citation graph, each node represents a paper. Links represent citati
 - [cora_link_prediction-GraphSAGE.ipynb](https://github.com/amaiya/ktrain/tree/master/examples/graphs): GraphSAGE model to predict missing links in the citation network.
 
 
+## Tabular Data
 
+### <a name="#tabularclass"></a> Tabular Classification Datasets
+
+#### [Titanic Survival Prediction](https://www.kaggle.com/c/titanic):  Tabular Classification
+
+This is the well-studied Titanic dataset from Kaggle.  The goal is to predict which passengers survived the Titanic disaster based on their attributes.
+
+- [tabular_classification_and_regression_example.ipynb](https://github.com/amaiya/ktrain/tree/master/examples/tabular): MLP for tabular classification
+
+
+#### [Income Prediction from Census Data](http://archive.ics.uci.edu/ml/datasets/Adult):  Tabular Classification
+
+This is the same dataset used in the [AutoGluon classification example](https://autogluon.mxnet.io/tutorials/tabular_prediction/tabular-quickstart.html).
+The goal is to predict which individuals make over $50K per year.
+
+
+- [IncomePrediction-MLP.ipynb](https://github.com/amaiya/ktrain/tree/master/examples/tabular): MLP for tabular classification
+
+
+### <a name="#tabularreg"></a> Tabular Regression Datasets
+
+
+#### [Adults Census Dataset](http://archive.ics.uci.edu/ml/datasets/Adult):  Tabular Regression
+
+The original goal of this dataset is to predict the individuals that make over $50K in this Census dataset.  We change the task to a regression problem
+and predict the Age attribute for each individual.  This is the same dataset used in the [AutoGluon regression example](https://autogluon.mxnet.io/tutorials/tabular_prediction/tabular-quickstart.html).
+
+- [tabular_classification_and_regression_example.ipynb](https://github.com/amaiya/ktrain/tree/master/examples/tabular): MLP for tabular regression
+
+
+#### [House Price Prediction](https://www.kaggle.com/c/house-prices-advanced-regression-techniques):  Tabular Regression
+
+- [HousePricePrediction-MLP.ipynb](https://github.com/amaiya/ktrain/tree/master/examples/tabular): MLP for tabular regression

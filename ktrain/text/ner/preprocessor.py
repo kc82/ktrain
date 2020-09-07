@@ -1,7 +1,7 @@
 from ...imports import *
 from ... import utils as U
 from ...preprocessor import Preprocessor
-from ...data import Dataset
+from ...data import SequenceDataset
 from .. import textutils as TU
 from .. import preprocessor as tpp
 from .anago.utils import filter_embeddings
@@ -10,9 +10,14 @@ OTHER = 'O'
 W2V = 'word2vec'
 SUPPORTED_EMBEDDINGS = [W2V]
 
+WORD_COL = 'Word'
+TAG_COL = 'Tag'
+SENT_COL = 'SentenceID'
+
+
 #tokenizer_filter = rs='!"#$%&()*+,-./:;<=>?@[\\]^_`{|}~\t\n'
-re_tok = re.compile(f'([{string.punctuation}“”¨«»®´·º½¾¿¡§£₤‘’])')
-def tokenize(s): return re_tok.sub(r' \1 ', s).split()
+#re_tok = re.compile(f'([{string.punctuation}“”¨«»®´·º½¾¿¡§£₤‘’])')
+#def tokenize(s): return re_tok.sub(r' \1 ', s).split()
 
 
 class NERPreprocessor(Preprocessor):
@@ -65,24 +70,31 @@ class NERPreprocessor(Preprocessor):
 
 
 
-    def preprocess(self, sentences):
+    def preprocess(self, sentences, lang=None, custom_tokenizer=None):
         if type(sentences) != list:
             raise ValueError('Param sentences must be a list of strings')
 
         # language detection
-        lang = TU.detect_lang(sentences)
+        if lang is None: lang = TU.detect_lang(sentences)
+
+        # set tokenizer
+        if custom_tokenizer is not None:
+            tokfunc = custom_tokenizer
+        elif TU.is_chinese(lang, strict=False): # strict=False: workaround for langdetect bug on short chinese texts
+            tokfunc = lambda text:[c for c in text]
+        else:
+            tokfunc = TU.tokenize
+
+        # preprocess
         X = []
         y = []
         for s in sentences:
-            if TU.is_chinese(lang, strict=False): # strict=False: workaround for langdetect bug on short chinese texts
-                tokenize_chinese = lambda text:[c for c in text]
-                tokens = tokenize_chinese(s)
-            else:
-                tokens = tokenize(s)
+            tokens = tokfunc(s)
             X.append(tokens)
             y.append([OTHER] * len(tokens))
         nerseq = NERSequence(X, y, p=self.p)
         return nerseq
+
 
     def preprocess_test(self, x_test, y_test, verbose=1):
         """
@@ -98,6 +110,12 @@ class NERPreprocessor(Preprocessor):
         test_df = array_to_df(x_test, y_test) 
         (x_list, y_list)  = process_df(test_df, verbose=verbose) 
         return NERSequence(x_list, y_list, batch_size=U.DEFAULT_BS, p=self.p)
+
+
+    def preprocess_test_from_conll2003(self, filepath, verbose=1):
+        df = conll2003_to_df(filepath)
+        (x, y)  = process_df(df)
+        return self.preprocess_test(x, y, verbose=verbose)
 
 
     def undo(self, nerseq):
@@ -124,6 +142,52 @@ class NERPreprocessor(Preprocessor):
         """
         return self.p.transform(X, y=y)
 
+
+
+def array_to_df(x_list, y_list):
+    ids = []
+    words = []
+    tags = []
+    for idx, lst in enumerate(x_list):
+        length = len(lst)
+        words.extend(lst)
+        tags.extend(y_list[idx])
+        ids.extend([idx] * length)
+    return pd.DataFrame(zip(ids, words, tags), columns=[SENT_COL, WORD_COL, TAG_COL])
+
+
+
+
+def conll2003_to_df(filepath, encoding='latin1'):
+    # read data and convert to dataframe
+    sents, words, tags = [],  [], []
+    sent_id = 0
+    docstart = False
+    with open(filepath, encoding=encoding) as f:
+        for line in f:
+            line = line.rstrip()
+            if line:
+                if line.startswith('-DOCSTART-'): 
+                    docstart=True
+                    continue
+                else:
+                    docstart=False
+                    parts = line.split()
+                    words.append(parts[0])
+                    tags.append(parts[-1])
+                    sents.append(sent_id)
+            else:
+                if not docstart:
+                    sent_id +=1
+    df = pd.DataFrame({SENT_COL: sents, WORD_COL : words, TAG_COL:tags})
+    df = df.fillna(method="ffill")
+    return df
+
+
+def gmb_to_df(filepath, encoding='latin1'):
+    df = pd.read_csv(filepath, encoding=encoding)
+    df = df.fillna(method="ffill")
+    return df
 
 
 
@@ -188,7 +252,7 @@ class SentenceGetter(object):
 
 
 
-class NERSequence(Dataset):
+class NERSequence(SequenceDataset):
 
     def __init__(self, x, y, batch_size=1, p=None):
         self.x = x

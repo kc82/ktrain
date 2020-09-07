@@ -6,6 +6,587 @@ Most recent releases are shown at the top. Each release shows:
 - **Changed**: Additional parameters, changes to inputs or outputs, etc
 - **Fixed**: Bug fixes that don't change documented behaviour
 
+## 0.21.2 (2020-09-03)
+
+### New:
+- N/A
+
+### Changed
+- `SUPPRESS_KTRAIN_WARNINGS` environment variable changed to `SUPPRESS_DEP_WARNINGS`
+
+### Fixed:
+- N/A
+
+
+## 0.21.1 (2020-09-03)
+
+### New:
+- N/A
+
+### Changed
+- added `num_beams` and `early_stopping` arguments to `translate` methods in `translation` module that can be set to improve translation speed
+- added `half` parameter to `Translator` construcor
+
+### Fixed:
+- N/A
+
+
+
+## 0.21.0 (2020-09-03)
+
+### New:
+- Added `translate_sentences` method to `Translator` class that translates list of sentences, where list is fed to model as single batch
+
+### Changed
+- Removed TensorFlow dependency from `setup.py` to allow users to use *ktrain* with any version of TensorFlow 2 they choose.
+- Added `truncation=True` to tokenization in `summarization` module
+- Require `transformers>=3.1.0` due to breaking changes
+- `SUPPRESS_TF_WARNINGS` environment variable changed to `SUPPRESS_KTRAIN_WARNINGS`
+
+### Fixed:
+- Use `prepare_seq2seq_batch` insteadd of `prepare_translation_batch` in `translation` module due to breaking change in `transformers==3.1.0`
+
+
+## 0.20.2 (2020-08-27)
+
+### New:
+- N/A
+
+### Changed
+- N/A
+
+### Fixed:
+- Always use `*Auto*` classes to load `transformers` models to prevent loading errors
+
+
+## 0.20.1 (2020-08-25)
+
+### New:
+- N/A
+
+### Changed
+- N/A
+
+### Fixed:
+- Added missing `torch.no_grad()` scope in `text.translation` and `text.summarization` modules
+
+
+
+## 0.20.0 (2020-08-24)
+
+### New:
+- added `nli_template` parameter to `ZeroShotClassifier.predict` to allow versatility in the kinds of labels that
+  can be predicted
+- efficiency improvements to `ZeroShotClassifier.predict` that allow faster predictions on large sequences
+  of documents and a large numer of labels to predict
+- added 'multilabel` parameter to `ZeroShotClassifier.predict`
+- added `labels` parameter to `ZeroShotClassifer.predict`, an alias to `topic_strings` parameter
+
+### Changed
+- N/A
+
+### Fixed:
+- Allow variations on `accuracy` metric such as `binary_accuracy` when inpecting model in `is_classifier`
+
+
+## 0.19.9 (2020-08-17)
+
+### New:
+- N/A
+
+### Changed
+- N/A
+
+### Fixed:
+- In `texts_from_array`, check `class_names` only after preprocessing before printing classification vs. regression status.
+
+
+## 0.19.8 (2020-08-17)
+
+### New:
+- N/A
+
+### Changed
+- N/A
+
+### Fixed:
+- In `TextPreprocessor` instances, correctly reset `class_names` when targets are in string format.
+
+
+## 0.19.7 (2020-08-16)
+
+### New:
+- N/A
+
+### Changed
+- added `class_weight` parameter to `lr_find` for imbalanced datasets
+- removed pins for `cchardet` and `scikitlearn` from `setup.py`
+- added version check for `eli5` fork
+- removed `scipy` pin from `setup.py`
+- Allow TensorFlow 2.3 for Python 3.8
+- Request  manual installation of `shap` in `TabularPredictor.explain` instead of inclusion in `setup.py`
+
+### Fixed:
+- N/A
+
+
+## 0.19.6 (2020-08-12)
+
+### New:
+- N/A
+
+### Changed
+-N/A
+
+### Fixed:
+- include metrics check in `is_classifier` function to support with non-standard loss functions
+
+
+## 0.19.5 (2020-08-11)
+
+### New:
+- N/A
+
+### Changed
+-N/A
+
+### Fixed:
+- Ensure transition to `YTransform` is backwards compatibility for `StandardTextPreprocessor` and `BertPreprocessor`
+
+
+## 0.19.4 (2020-08-10)
+
+### New:
+- N/A
+
+### Changed
+- `TextPreprocessor` instances now use `YTransform` class to transform targets
+- `texts_from_df`, `texts_from_csv`, and `texts_from_array` employ the use of either `YTransformDataFrame` or `YTransform`
+- `images_from_df`, `images_from_fname`, `images_from_csv`, and `imagas_from_array` use `YTransformDataFrame` or `YTransform`
+- Extra imports removed from PyTorch-based `zsl.core.ZeroShotClassifier` and `summarization.core.TransformerSummarizer`. If necessary, 
+   both can now be used without having TensorFlow installed by installing ktrain using `--no-deps` and importing these modules using 
+    a method like [this](https://stackoverflow.com/a/58423785).
+
+### Fixed:
+- N/A
+
+
+## 0.19.3 (2020-08-05)
+
+### New:
+- N/A/
+
+### Changed
+- `NERPredictor.predict` was changed to accept an optional `custom_tokenizer` argument
+
+### Fixed:
+- N/A
+
+
+
+## 0.19.2 (2020-08-03)
+
+### New:
+- N/A
+
+### Changed
+- N/A
+
+### Fixed:
+- added missing `num_classes` argument to `to_categorical`
+
+
+## 0.19.1 (2020-07-29)
+
+### New:
+- N/A
+
+### Changed
+- Adjusted `no_grad` scope in `ZeroShotClassifier.predict`
+
+### Fixed:
+- N/A
+
+
+## 0.19.0 (2020-07-29)
+
+### New:
+- support for `tabular` data including explainable AI for tabular predictions
+- `learner.validate` and `learner.evaluate` now support regression models
+- added `restore_weights_only` flag to `lr_find`.  When True, only the model weights will be restored after
+  simulating training, not the optimizer weights. In at least a few observed cases, this "warm up" seems to improve performance
+  when actual training begins. Further investigation is needed, so it is False by default.
+
+### Changed
+- N/A
+
+### Fixed:
+- added `save_path` argument to `Learner.validate` and `Learner.evaluate`.  If `print_report=False`, classification
+  report will be saved as CSV to `save_path`.
+- Use `torch.no_grad` with `ZeroShotClassifier.predict` to [prevent OOM](https://github.com/amaiya/ktrain/issues/215)
+- Added `max_length` parameter to `ZeroShotClassifier.predict` to [prevent errors on long documnets](https://github.com/amaiya/ktrain/issues/215)
+- Added type check to `TransformersPreprocessor.preprocess_train`
+
+
+## 0.18.5 (2020-07-20)
+
+### New:
+- N/A
+
+### Changed
+- N/A
+
+### Fixed:
+- Changed `qa` module to use use 'Auto' when loading `QuestionAnswering` models and tokenizer
+- try `from_pt=True` for `qa` module if initial model-loading fails
+- use `get_hf_model_name` in `qa` module
+
+
+## 0.18.4 (2020-07-17)
+
+### New:
+- N/A
+
+### Changed
+- N/A
+
+### Fixed:
+- return gracefully if no documents match question in `qa` module
+- tokenize question in `qa` module to ensure all candidate documents are returned
+- Added error in `text.preprocessor` when training set has incomplete integer labels
+
+
+## 0.18.3 (2020-07-12)
+
+### New:
+- added `batch_size` argument to `ZeroShotClassifier.predict` that can be increased to speed up predictions.
+  This is especially useful if `len(topic_strings)` is large.
+
+### Changed
+- N/A
+
+### Fixed:
+- fixed typo in `load_predictor` error message
+
+
+## 0.18.2 (2020-07-08)
+
+### New:
+- N/A
+
+### Changed
+- updated doc comments in core module
+- removed unused `nosave` parameter from `reset_weights`
+- added warning about obsolete `show_wd` parameter in `print_layers` method
+- pin to `scipy==1.4.1` due to TensorFlow requirement
+
+### Fixed:
+- N/A
+
+
+## 0.18.1 (2020-07-07)
+
+### New:
+- N/A
+
+### Changed
+- Use `tensorflow==2.1.0` if Python 3.6/3.7 and use `tensorflow==2.2.0` only if on Python 3.8 due to TensorFlow v2.2.0 issues
+
+### Fixed:
+- N/A
+
+
+## 0.18.0 (2020-07-07)
+
+### New:
+- N/A
+
+### Changed
+- Fixes to address changes or issues in TensorFlow 2.2.0:
+  - created `metrics_from_model` function due to changes in the way metrics are extracted from compiled model
+  - use `loss_fn_from_model` function due to changes in they way loss functions are extracted from compiled model
+  - addd `**kwargs` to `AdamWeightDecay based on [this issue](https://github.com/tensorflow/addons/issues/1645)
+  - changed `TransformerTextClassLearner.predict` and `TextPredictor.predict` to deal with tuples being returned by `predict` in TensorFlow 2.2.0
+  - changed multilabel test to use loss insead of accuracy due to [TF 2.2.0 issue](https://github.com/tensorflow/tensorflow/issues/41114)
+  - changed `Learner.lr_find` to use `save_model` and `load_model` to restore weights due to [this TF issue](https://github.com/tensorflow/tensorflow/issues/41116) 
+    and added `TransformersPreprocessor.load_model_and_configure_from_data` to support this
+
+### Fixed:
+- N/A
+
+
+
+
+## 0.17.5 (2020-07-02)
+
+### New:
+- N/A
+
+### Changed
+- N/A
+
+### Fixed:
+- Explicitly supply `'truncate='longest_first'` to prevent sentence pair classification from breaking in `transformers==3.0.0`
+- Fixed typo in `encode_plus` invocation
+
+
+## 0.17.4 (2020-07-02)
+
+### New:
+- N/A
+
+### Changed
+- N/A
+
+### Fixed:
+- Explicitly supply `'truncate='longest_first'` to prevent sentence pair classification from breaking in `transformers==3.0.0`
+
+
+
+## 0.17.3 (2020-06-26)
+
+### New:
+- N/A
+
+### Changed
+- N/A
+
+### Fixed:
+- Changed `setup.py` to open README file using `encoding="utf-8"` to prevent installation problems on Windows machines with `cp1252` encoding
+
+
+## 0.17.2 (2020-06-25)
+
+### New:
+- Added support for Russian in `text.EnglishTranslator`
+
+### Changed
+- N/A
+
+### Fixed:
+- N/A
+
+## 0.17.1 (2020-06-24)
+
+### New:
+- N/A
+
+### Changed
+- N/A
+
+### Fixed:
+- Properly set device in `text.Translator` and use cuda when available
+
+
+## 0.17.0 (2020-06-24)
+
+### New:
+- support for language translation using pretraiend `MarianMT` models
+- added `core.evaluate` as alias to `core.validate`
+- `Learner.estimate_lr` method will return numerical estimates of learning rate using two different methods.
+   Should only be called **after** running `Learner.lr_find`.
+
+### Changed
+- `text.zsl.ZeroShotClassifier` changed to use `AutoModel*` and `AutoTokenizer` in order to load any `mlni` model
+- remove external modules from `ktrain.__init__.py` so that they do not appear when pressing TAB in notebook
+- added `Transformer.save_tokenizer` and `Transformer.get_tokenizer` methods to facilitate training on machines
+  with no internet
+
+### Fixed:
+- explicitly call `plt.show()` in `LRFinder.plot_loss` to resolved issues with plot not displaying in certain cases (PR #170)
+- suppress warning about text regression when making text regression predictions
+- allow `xnli` models for `zsl` module
+
+
+## 0.16.3 (2020-06-10)
+
+### New:
+- added `metrics` parameter to `text.text_classifier` and `text.text_regression_model` functions
+- added `metrics` parameter to `Transformer.get_classifier` and `Transformer.get_regrssion_model` methods
+
+### Changed
+- `metric` parameter in `vision.image_classifier` and `vision.image_regression_model` functions changed to `metrics`
+
+### Fixed:
+- N/A
+
+
+## 0.16.2 (2020-06-07)
+
+### New:
+- N/A
+
+### Changed
+- default model for summarization changed to `facebook/bart-large-cnn` due to breaking change in v2.11
+- added `device` argument to `TransformerSummarizer` constructor to control PyTorch device
+
+### Fixed:
+- require `transformers>=2.11.0` due to breaking changes in v2.11 related to `BART` models
+
+
+## 0.16.1 (2020-06-05)
+
+### New:
+- N/A
+
+### Changed
+- N/A/
+
+### Fixed:
+- prevent `transformer` tokenizers from being pickled during `predictor.save`, as it causes problems for
+  some community-uploaded models like `bert-base-japanese-whole-word-masking`.
+
+## 0.16.0 (2020-06-03)
+
+### New:
+- support for Zero-Shot Topic Classification via the `text.ZeroShotClassifier`.  
+
+### Changed
+- N/A/
+
+### Fixed:
+- N/A
+
+
+## 0.15.4 (2020-06-03)
+
+### New:
+- N/A
+
+### Changed
+- N/A/
+
+### Fixed:
+- Added the `procs`, `limitmb`, and `multisegment` argumetns to `index_from_list` and `index_from_folder` method in `text.SimpleQA`
+  to speedup indexing when necessary.  Supplying `multisegment=True` speeds things up significantly, for example. Defaults, however, are
+  the same as before. Users must explicitly change values if desiring a speedup.
+- Load `xlm-roberta*` as `jplu/tf-xlm-roberta*` to bypass error from `transformers`
+
+
+## 0.15.3 (2020-05-28)
+
+### New:
+- N/A
+
+### Changed
+- [**breaking change**] The `multilabel` argument in `text.Transformer` constructor was moved to `Transformer.get_classifier` and now correctly allows
+  users to forcibly configure model for multilabel task regardless as to what data suggests. However, it is recommended to leave this value as `None`.
+- The methods `predictor.save`, `ktrain.load_predictor`, `learner.save_model`, `learner.load_model` all now accept a path to folder where
+  all files (e.g., model file, `.preproc` file) will be saved. If path does not exist, it will be created.
+   This should not be a breaking change as the `load*` methods will still look for files in the old location if model or predictor was saved
+  using an older version of *ktrain*.
+
+### Fixed:
+- N/A
+
+
+
+
+
+## 0.15.2 (2020-05-15)
+
+### New:
+- N/A
+
+### Changed
+- Added `n_samples` argument to `TextPredictor.explain` to address slowness of `explain` on Google Colab
+- Lock to version 0.21.3 of `scikit-learn` to ensure old-style explanations are generated from `TextPredictor.explain`
+
+### Fixed:
+- added missing `import pickle` to ensure saved topic models can be loaded
+
+
+## 0.15.1 (2020-05-14)
+
+### New:
+- N/A
+
+### Changed
+- Changed `Transformer.preprocess*` methods to accept sentence pairs for sentence pair classification
+
+### Fixed:
+- N/A
+
+## 0.15.0 (2020-05-13)
+
+### New:
+- Out-of-the-box support for image regression
+- `vision.images_from_df` function to load image data from *pandas* DataFrames
+
+### Changed
+- references to `fit_generator` and `predict_generator` converted to `fit` and `predict`
+
+### Fixed:
+- Resolved issue with multilabel detection returning `False` for valid multilabel problems when data is in form of generator
+
+
+## 0.14.7 (2020-05-10)
+
+### New:
+- Added `TFDataset` class for use as wrapper around arbitrary `tf.data.Dataset` objects for use in *ktrain*
+
+### Changed
+- Added `NERPreprocessor.preprocess_train_from_conll2003`
+- Removed extraneous imports from `text.__init__.py` and `vision.__init__.py`
+- `classes` argument in `images_from_array` changed to `class_names`
+
+### Fixed:
+- ensure NER data is properly prepared `text.ner.learner.validate`
+- fixed typo with `df` reference in `images_from_fname`
+
+
+## 0.14.6 (2020-05-06)
+
+### New:
+- If no validation data is supplied to `images_from_array`, training data is split to generate validation data
+
+### Changed
+- issue warning if Learner cannot save original weights
+- `images_from_array` accepts labels in the form of integer class IDs
+
+### Fixed:
+- fix pandas `SettingwithCopyWarning` from `images_from_csv`
+- fixed issue with `return_proba=True` including class labels for multilabel image classification
+- resolved issue with class labels not being set correctly in `images_from_array`
+- lock to `cchardet==2.1.5` due to [this issue](https://stackoverflow.com/questions/60784527/ktrain-importerror-dll-load-failed-the-specified-module-could-not-be-found)
+- fixed `y_from_data` from NumpyArrayIterators in image classification
+
+
+## 0.14.5 (2020-05-03)
+
+### New:
+- N/A
+
+### Changed
+- N/A
+
+### Fixed:
+- fixed issue with MobileNet model due to typo and added MobileNet example notebook
+
+## 0.14.4 (2020-04-30)
+
+### New:
+- N/A
+
+### Changed
+- added `merge_tokens` and `return_proba` options to `NERPredictor.predict`
+
+### Fixed:
+- N/A
+
+
+## 0.14.3 (2020-04-27)
+
+### New:
+- N/A
+
+### Changed
+- added `textutils` to `text` namespace and added note about `sent_tokenize` to sequence-tagging tutorial
+
+### Fixed:
+- cast dependent variable to `tf.float32` instead of `tf.int64` for text regression problems using `transformers` library
+
+
 
 ## 0.14.2 (2020-04-21)
 
